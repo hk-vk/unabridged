@@ -1,0 +1,17 @@
+{
+  "products": [
+    {
+      "asin": "B0CW1QFHBN",
+      "title": "Dune",
+      "authors": [{"asin": "B000APHX8K", "name": "Frank Herbert"}],
+      "narrators": [{"name": "Scott Brick"}, {"name": "Orlagh Cassidy"}],
+      "runtime_length_min": 1263,
+      "product_images": {"500": "https://m.media-amazon.com/images/I/41dune._SL500_.jpg"},
+      "rating": {"overall_distribution": {"average_rating": 4.6, "num_ratings": 120345}},
+      "sample_url": "https://samples.audible.com/bk/adbl/012345/bk_adbl_012345_sample.mp3",
+      "is_ayce": true
+    }
+  ],
+  "response_groups": ["contributors", "media", "product_attrs", "rating"],
+  "total_results": 4231
+}

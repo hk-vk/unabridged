@@ -1,0 +1,7 @@
+{
+  "asin_last_position_heard_annots": [
+    {"asin": "B002V5D7RU", "last_position_heard": {"last_updated": "2026-11-01T20:14:51.357Z", "position_ms": 1234567, "status": "Exists"}},
+    {"asin": "B07PWF7VKB", "last_position_heard": {"status": "DoesNotExist"}}
+  ],
+  "response_groups": ["always-returned"]
+}

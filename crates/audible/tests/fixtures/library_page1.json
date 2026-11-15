@@ -1,0 +1,62 @@
+{
+  "items": [
+    {
+      "asin": "B002V5D7RU",
+      "title": "The Hobbit",
+      "subtitle": "Or There and Back Again",
+      "authors": [{"asin": "B000AP9A6K", "name": "J. R. R. Tolkien"}],
+      "narrators": [{"name": "Andy Serkis"}],
+      "series": null,
+      "publisher_name": "HarperCollins Publishers Limited",
+      "release_date": "2020-09-17",
+      "runtime_length_min": 662,
+      "language": "english",
+      "format_type": "unabridged",
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "merchandising_summary": "<p>Bilbo Baggins is a hobbit who enjoys a comfortable life.</p>",
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51aqHgPpaQL._SL500_.jpg",
+        "1215": "https://m.media-amazon.com/images/I/51aqHgPpaQL._SL1215_.jpg"
+      },
+      "rating": {
+        "num_reviews": 9876,
+        "overall_distribution": {"average_rating": 4.86, "display_average_rating": "4.9", "num_ratings": 43210}
+      },
+      "category_ladders": [
+        {"ladder": [{"id": "18580606011", "name": "Science Fiction & Fantasy"}, {"id": "18580607011", "name": "Fantasy"}], "root": "Genres"}
+      ],
+      "available_codecs": [
+        {"enhanced_codec": "LC_64_22050_stereo", "format": "Format4", "is_kindle_enhanced": false, "name": "format4"},
+        {"enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128"}
+      ],
+      "customer_rights": {"is_consumable": true, "is_consumable_indefinitely": true, "is_consumable_offline": true, "is_consumable_until": null},
+      "is_ayce": false,
+      "purchase_date": "2021-03-04T18:22:11.123Z",
+      "library_status": {"date_added": "2021-03-04T18:22:11.123Z", "is_pending": null, "is_preordered": null, "is_removable": null, "is_visible": null},
+      "percent_complete": 37.5,
+      "is_finished": false,
+      "listening_status": {"finished_at_timestamp": null, "is_finished": false, "percent_complete": 37.5, "time_remaining_seconds": 24825},
+      "status": "Active",
+      "origin_type": "Purchase",
+      "sku": "BK_HARP_005611",
+      "sku_lite": "BK_HARP_005611"
+    },
+    {
+      "asin": "B07PWF7VKB",
+      "title": "Project Hail Mary",
+      "authors": [{"asin": "B00G0WYW92", "name": "Andy Weir"}],
+      "narrators": [{"name": "Ray Porter"}],
+      "series": [],
+      "runtime_length_min": 970,
+      "content_delivery_type": "SinglePartBook",
+      "product_images": {"500": "https://m.media-amazon.com/images/I/51b6UNQX8ML._SL500_.jpg"},
+      "available_codecs": null,
+      "customer_rights": {"is_consumable": true, "is_consumable_offline": true},
+      "purchase_date": "2021-05-04T07:00:00Z",
+      "is_finished": true,
+      "percent_complete": 100.0
+    }
+  ],
+  "response_groups": ["always-returned", "product_desc", "contributors", "media", "series", "rating", "customer_rights", "percent_complete", "is_finished", "listening_status"]
+}

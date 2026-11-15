@@ -1,0 +1,6 @@
+{
+  "response": {
+    "error": {"code": "InvalidValue", "message": "The authorization code is invalid or expired.", "index": "auth_data.authorization_code"}
+  },
+  "request_id": "9F8E7D6C"
+}

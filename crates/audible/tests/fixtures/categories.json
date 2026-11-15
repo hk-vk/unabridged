@@ -1,0 +1,8 @@
+{
+  "categories": [
+    {"id": "18574426011", "name": "Literature & Fiction", "children": [{"id": "18574440011", "name": "Classics"}]},
+    {"id": "18580606011", "name": "Science Fiction & Fantasy"},
+    {"id": "18571951011", "name": "Biographies & Memoirs"}
+  ],
+  "response_groups": ["category_metadata"]
+}

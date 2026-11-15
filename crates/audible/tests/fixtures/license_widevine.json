@@ -1,0 +1,13 @@
+{
+  "content_license": {
+    "acr": "CR!WIDEVINEONLYEXAMPLE0000000000",
+    "asin": "B0D7WIDEVN",
+    "content_metadata": {
+      "content_reference": {"acr": "CR!WIDEVINEONLYEXAMPLE0000000000", "asin": "B0D7WIDEVN", "codec": "ec+3", "content_format": "M4A_EC3_768"},
+      "content_url": {"offline_url": "https://dash.audible.example/manifest.mpd"}
+    },
+    "drm_type": "Widevine",
+    "license_response": "CAESEXAMPLEWIDEVINELICENSE",
+    "status_code": "Granted"
+  }
+}

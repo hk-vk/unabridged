@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "asin": "B08G9PRS1K",
+      "title": "The Way of Kings",
+      "authors": [{"asin": "B001IGFHW6", "name": "Brandon Sanderson"}],
+      "narrators": [{"name": "Michael Kramer"}, {"name": "Kate Reading"}],
+      "series": [{"asin": "B00DA6YEKS", "sequence": "1", "title": "The Stormlight Archive", "url": "/pd/The-Stormlight-Archive-Audiobook/B00DA6YEKS"}],
+      "runtime_length_min": 2724,
+      "content_delivery_type": "MultiPartBook",
+      "product_images": {"500": "https://m.media-amazon.com/images/I/51XYZ._SL500_.jpg"},
+      "purchase_date": "2019-12-25T10:00:00Z"
+    }
+  ],
+  "response_groups": ["always-returned"]
+}

@@ -1,0 +1,36 @@
+{
+  "content_metadata": {
+    "chapter_info": {
+      "brandIntroDurationMs": 2043,
+      "brandOutroDurationMs": 5016,
+      "chapters": [
+        {"length_ms": 15960, "start_offset_ms": 0, "start_offset_sec": 0, "title": "Opening Credits"},
+        {
+          "length_ms": 3127521, "start_offset_ms": 15960, "start_offset_sec": 16, "title": "Part One",
+          "chapters": [
+            {"length_ms": 1563000, "start_offset_ms": 15960, "start_offset_sec": 16, "title": "Chapter 1: An Unexpected Party"},
+            {"length_ms": 1564521, "start_offset_ms": 1578960, "start_offset_sec": 1579, "title": "Chapter 2: Roast Mutton"}
+          ]
+        },
+        {"length_ms": 62000, "start_offset_ms": 3143481, "start_offset_sec": 3143, "title": "End Credits"}
+      ],
+      "is_accurate": true,
+      "runtime_length_ms": 3205481,
+      "runtime_length_sec": 3205
+    },
+    "content_reference": {
+      "acr": "CR!7XQ4B3JH9V0KQ8WZ0Y0RNX6MCB1E",
+      "asin": "B002V5D7RU",
+      "codec": "mp4a.40.2",
+      "content_format": "AAX_44_128",
+      "content_size_in_bytes": 638582123,
+      "file_version": "1",
+      "marketplace": "AF2M0KC94RCEA",
+      "sku": "BK_HARP_005611",
+      "tempo": "1.0",
+      "version": "71553781"
+    },
+    "last_position_heard": {"last_updated": "2026-11-01T20:14:51.357Z", "position_ms": 1234567, "status": "Exists"}
+  },
+  "response_groups": ["chapter_info", "content_reference", "last_position_heard", "always-returned"]
+}

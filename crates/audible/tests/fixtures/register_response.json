@@ -1,0 +1,37 @@
+{
+  "response": {
+    "success": {
+      "extensions": {
+        "device_info": {
+          "device_name": "Hari's 2nd Audible for iPhone",
+          "device_serial_number": "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7cDe0f",
+          "device_type": "A2CZJZGLK2JJVM"
+        },
+        "customer_info": {
+          "account_pool": "Amazon",
+          "user_id": "amzn1.account.AEXAMPLECUSTOMERID",
+          "home_region": "NA",
+          "name": "Example Owner",
+          "given_name": "Example"
+        }
+      },
+      "tokens": {
+        "website_cookies": [
+          {"Path": "/", "Secure": "true", "Value": "\"example-session-id\"", "Expires": "15 Nov 2046 10:00:00 GMT", "Domain": ".amazon.com", "HttpOnly": "false", "Name": "session-id"}
+        ],
+        "store_authentication_cookie": {"cookie": "example-store-cookie"},
+        "mac_dms": {
+          "device_private_key": "PRIVATE_KEY_PLACEHOLDER",
+          "adp_token": "{enc:EXAMPLEENC}{key:EXAMPLEKEY}{iv:EXAMPLEIV}{name:QURQVG9rZW5FbmNyeXB0aW9uS2V5}{serial:Mg==}"
+        },
+        "bearer": {
+          "access_token": "Atna|EXAMPLEACCESSTOKEN",
+          "refresh_token": "Atnr|EXAMPLEREFRESHTOKEN",
+          "expires_in": "3600"
+        }
+      },
+      "customer_id": "amzn1.account.AEXAMPLECUSTOMERID"
+    },
+    "request_id": "8A1B2C3D4E5F"
+  }
+}

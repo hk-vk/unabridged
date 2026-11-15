@@ -1,0 +1,12 @@
+{
+  "content_license": {
+    "asin": "B002V5D7RU",
+    "license_denial_reasons": [
+      {"message": "Customer is throttled.", "rejectionReason": "CustomerThrottled", "validationType": "Throttling"}
+    ],
+    "message": "License not granted to customer [amzn1.account.AEXAMPLECUSTOMERID] for asin [B002V5D7RU]",
+    "request_id": "6E3B1C9A0F2D4E7A8B5C",
+    "status_code": "Denied"
+  },
+  "response_groups": ["always-returned"]
+}
