@@ -190,6 +190,9 @@ struct Shell {
     browse_name: Option<String>,
     _subscriptions: Vec<gpui_kit::Subscription>,
     search_results: Vec<audible::models::Product>,
+    showing_search: bool,
+    explore_feed: Option<backend::ExploreFeed>,
+    explore_loading: bool,
     searching: bool,
     search_message: Option<String>,
     download_notice: Option<String>,
@@ -197,6 +200,7 @@ struct Shell {
     player: Option<ActivePlayer>,
     loading_player: bool,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,
+    covers_pending: std::collections::HashSet<audible::Asin>,
     palettes: std::collections::HashMap<audible::Asin, ui::theme::BookPalette>,
 }
 
@@ -277,6 +281,9 @@ impl Shell {
             browse_name: None,
             _subscriptions: subscriptions,
             search_results: Vec::new(),
+            showing_search: false,
+            explore_feed: None,
+            explore_loading: false,
             searching: false,
             search_message: None,
             download_notice: None,
@@ -284,6 +291,7 @@ impl Shell {
             player: None,
             loading_player: false,
             covers: Default::default(),
+            covers_pending: Default::default(),
             palettes: Default::default(),
         };
         shell.restore(cx);
@@ -356,6 +364,9 @@ impl Shell {
                     Err(error) => Account::Error(error.to_string()),
                 };
                 this.load_covers(cx);
+                if this.page == Page::Explore {
+                    this.load_explore(cx);
+                }
                 cx.notify();
             });
         })
@@ -416,6 +427,9 @@ impl Shell {
                     Err(error) => Account::Error(error.to_string()),
                 };
                 this.load_covers(cx);
+                if this.page == Page::Explore {
+                    this.load_explore(cx);
+                }
                 cx.notify();
             });
         })
@@ -428,8 +442,11 @@ impl Shell {
             return;
         }
         self.searching = true;
+        self.showing_search = true;
+        self.search_results.clear();
         self.search_message = Some("Searching Audible…".into());
         cx.notify();
+        let display_query = query.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move { backend::search_catalog(query) })
@@ -439,14 +456,81 @@ impl Shell {
                 match result {
                     Ok(products) => {
                         this.search_message = Some(if products.is_empty() {
-                            "No results found.".into()
+                            format!("No results for “{display_query}”.")
                         } else {
-                            format!("{} results", products.len())
+                            format!("{} results for “{display_query}”", products.len())
                         });
                         this.search_results = products;
                         this.load_covers(cx);
                     }
                     Err(error) => this.search_message = Some(format!("Search failed: {error}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn load_explore(&mut self, cx: &mut Context<Self>) {
+        if self.explore_loading
+            || self.explore_feed.is_some()
+            || !matches!(self.account, Account::Ready(_))
+        {
+            return;
+        }
+        self.explore_loading = true;
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { backend::explore() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.explore_loading = false;
+                match result {
+                    Ok(feed) => {
+                        this.explore_feed = Some(feed);
+                        this.load_covers(cx);
+                    }
+                    Err(error) => {
+                        this.search_message = Some(format!("Could not load Explore: {error}"))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn browse_genre(
+        &mut self,
+        id: audible::models::CategoryId,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.searching {
+            return;
+        }
+        self.showing_search = true;
+        self.searching = true;
+        self.search_results.clear();
+        self.search_message = Some(format!("Loading {name}…"));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::browse_genre(id) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.searching = false;
+                match result {
+                    Ok(products) => {
+                        this.search_message = Some(if products.is_empty() {
+                            format!("No books found in {name}.")
+                        } else {
+                            format!("{name} · {} books", products.len())
+                        });
+                        this.search_results = products;
+                        this.load_covers(cx);
+                    }
+                    Err(error) => {
+                        this.search_message = Some(format!("Could not load {name}: {error}"))
+                    }
                 }
                 cx.notify();
             });
@@ -466,45 +550,63 @@ impl Shell {
                     .map(|url| (item.asin.clone(), url.to_string()))
             })
             .collect();
+        if let Some(feed) = &self.explore_feed {
+            covers.extend(feed.new_releases.iter().filter_map(|item| {
+                item.cover_url(500)
+                    .map(|url| (item.asin.clone(), url.to_string()))
+            }));
+        }
         covers.extend(self.search_results.iter().filter_map(|item| {
             item.cover_url(500)
                 .map(|url| (item.asin.clone(), url.to_string()))
         }));
-        covers.retain(|(asin, _)| !self.covers.contains_key(asin));
-        cx.spawn(async move |this, cx| {
-            for (asin, url) in covers {
-                let key = asin.clone();
-                let result = cx
-                    .background_spawn(async move {
-                        let path = backend::cover(&asin, &url)?;
-                        let palette = image::ImageReader::open(&path)
-                            .ok()
-                            .and_then(|reader| reader.with_guessed_format().ok())
-                            .and_then(|reader| reader.decode().ok())
-                            .and_then(|image| {
-                                let pixels = image.thumbnail(128, 128).to_rgba8();
-                                ui::theme::BookPalette::dominant_color(pixels.as_raw())
-                            })
-                            .map(ui::theme::BookPalette::from_cover_color);
-                        Ok::<_, anyhow::Error>((path, palette))
-                    })
-                    .await;
-                if let Ok((path, palette)) = result
-                    && this
+        covers.retain(|(asin, _)| {
+            !self.covers.contains_key(asin) && self.covers_pending.insert(asin.clone())
+        });
+        let queue = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+            covers,
+        )));
+        for _ in 0..4 {
+            let queue = queue.clone();
+            cx.spawn(async move |this, cx| {
+                loop {
+                    let next = queue.lock().ok().and_then(|mut queue| queue.pop_front());
+                    let Some((asin, url)) = next else { break };
+                    let key = asin.clone();
+                    let result = cx
+                        .background_spawn(async move {
+                            let path = backend::cover(&asin, &url)?;
+                            let palette = image::ImageReader::open(&path)
+                                .ok()
+                                .and_then(|reader| reader.with_guessed_format().ok())
+                                .and_then(|reader| reader.decode().ok())
+                                .and_then(|image| {
+                                    let pixels = image.thumbnail(128, 128).to_rgba8();
+                                    ui::theme::BookPalette::dominant_color(pixels.as_raw())
+                                })
+                                .map(ui::theme::BookPalette::from_cover_color);
+                            Ok::<_, anyhow::Error>((path, palette))
+                        })
+                        .await;
+                    if this
                         .update(cx, |this, cx| {
-                            if let Some(palette) = palette {
-                                this.palettes.insert(key.clone(), palette);
+                            this.covers_pending.remove(&key);
+                            if let Ok((path, palette)) = result {
+                                if let Some(palette) = palette {
+                                    this.palettes.insert(key.clone(), palette);
+                                }
+                                this.covers.insert(key, path);
+                                cx.notify();
                             }
-                            this.covers.insert(key, path);
-                            cx.notify();
                         })
                         .is_err()
-                {
-                    break;
+                    {
+                        break;
+                    }
                 }
-            }
-        })
-        .detach();
+            })
+            .detach();
+        }
     }
 
     fn download(
@@ -1320,6 +1422,9 @@ impl Shell {
                 if page == Page::Bookmarks {
                     this.load_bookmarks(cx);
                 }
+                if page == Page::Explore {
+                    this.load_explore(cx);
+                }
                 cx.notify();
             }))
     }
@@ -1417,7 +1522,7 @@ impl Shell {
             .into_any_element()
     }
 
-    fn account_view(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn account_view(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         if self.page == Page::Settings {
             return self.settings_view(cx);
         }
@@ -1581,22 +1686,71 @@ impl Shell {
                         .into_any_element();
                 }
                 if self.page == Page::Explore {
-                    return div().flex().flex_col().gap(px(18.))
+                    let mut view = div().flex().flex_col().gap(px(24.))
                         .child(heading("Explore Audible"))
                         .child(div().flex().gap(px(12.)).child(div().w(px(400.)).child(Input::new(&self.search)))
-                            .child(Button::new("search-catalog").label("Search").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.search_catalog(cx)))) )
-                        .children(self.search_message.iter().map(|message| div().text_size(px(13.)).text_color(color).child(message.clone())))
-                        .children(self.search_results.iter().map(|item| {
-                            let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
-                            let image = self.covers.get(&item.asin).cloned();
+                            .child(Button::new("search-catalog").label("Search").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.search_catalog(cx)))));
+                    if self.showing_search {
+                        view = view.child(Button::new("explore-home").label("Back to Explore").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.showing_search = false; this.search_message = None; cx.notify(); })))
+                            .children(self.search_message.iter().map(|message| div().text_size(px(13.)).text_color(color).child(message.clone())))
+                            .children(self.search_results.iter().map(|item| {
+                                let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
+                                let image = self.covers.get(&item.asin).cloned();
+                                let product = item.clone();
+                                div().id(format!("catalog-{}", item.asin)).cursor_pointer().rounded(px(8.)).hover(|style| style.bg(hover_fill)).active(|style| style.opacity(0.8)).flex().items_center().gap(px(18.)).pb(px(16.)).border_b_1().border_color(hairline)
+                                    .on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx)))
+                                    .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(72.), 6.))
+                                    .child(div().flex().flex_col().gap(px(5.))
+                                        .child(div().font_family("Literata").text_size(px(18.)).child(title))
+                                        .child(div().text_size(px(13.)).text_color(color).child(item.author_names())))
+                            }));
+                    } else if let Some(feed) = &self.explore_feed {
+                        if let Some(message) = &feed.warning { view = view.child(div().text_size(px(13.)).text_color(color).child(message.clone())); }
+                        if let Some(item) = feed.new_releases.first() {
                             let product = item.clone();
-                            div().id(format!("catalog-{}", item.asin)).cursor_pointer().rounded(px(8.)).hover(|style| style.bg(hover_fill)).active(|style| style.opacity(0.8)).flex().items_center().gap(px(18.)).pb(px(16.)).border_b_1().border_color(hairline)
-                                .on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx)))
-                                .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(72.), 6.))
-                                .child(div().flex().flex_col().gap(px(5.))
-                                    .child(div().font_family("Literata").text_size(px(18.)).child(title))
-                                    .child(div().text_size(px(13.)).text_color(color).child(item.author_names())))
-                        })).into_any_element();
+                            let palette = self.palettes.get(&item.asin).copied().unwrap_or_default();
+                            let image = self.covers.get(&item.asin).cloned();
+                            view = view.child(div().rounded(px(16.)).p(px(24.)).flex().items_center().gap(px(24.)).elevation(Elevation::Banner(palette), cx.theme(), window)
+                                .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(140.), 7.).elevation(Elevation::CoverOnField))
+                                .child(div().flex().flex_col().gap(px(8.))
+                                    .child(div().text_size(px(12.)).text_color(palette.on_field_muted).child("New release"))
+                                    .child(div().font_family("Literata").text_size(px(28.)).text_color(palette.on_field).child(item.title.clone().unwrap_or_else(|| "Untitled".into())))
+                                    .child(div().text_size(px(13.)).text_color(palette.on_field_muted).child(item.author_names()))
+                                    .child(Button::new("featured-book").label("View book").variant(ButtonVariant::Light(palette)).on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx))))));
+                        }
+                        if !feed.genres.is_empty() {
+                            view = view.child(div().flex().flex_col().gap(px(12.))
+                                .child(div().text_size(px(19.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Browse by genre"))
+                                .child(div().flex().flex_wrap().gap(px(10.)).children(feed.genres.iter().take(6).enumerate().map(|(index, genre)| {
+                                    let id = genre.id.clone(); let name = genre.name.clone(); let search_name = name.clone();
+                                    let accent = ui::theme::Accent::resolve(ui::theme::AccentTheme::ALL[index % ui::theme::AccentTheme::ALL.len()], cx.theme().appearance, cx.theme().colors.window);
+                                    div().id(("genre", index)).cursor_pointer().w(px(145.)).h(px(58.)).px(px(14.)).flex().items_center().rounded(px(10.))
+                                        .bg(accent.tint).text_color(accent.on_tint).text_size(px(14.)).font_weight(gpui_kit::FontWeight::MEDIUM)
+                                        .hover(|style| style.opacity(0.84)).active(|style| style.opacity(0.72))
+                                        .on_click(cx.listener(move |this, _, _, cx| this.browse_genre(id.clone(), search_name.clone(), cx)))
+                                        .child(name)
+                                }))));
+                        }
+                        if !feed.new_releases.is_empty() {
+                            view = view.child(div().flex().flex_col().gap(px(12.))
+                                .child(div().text_size(px(19.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child("New and noteworthy"))
+                                .child(div().flex().flex_wrap().gap(px(20.)).children(feed.new_releases.iter().take(6).map(|item| {
+                                    let product = item.clone(); let image = self.covers.get(&item.asin).cloned();
+                                    div().id(format!("release-{}", item.asin)).w(px(142.)).flex_none().cursor_pointer().rounded(px(8.))
+                                        .hover(|style| style.opacity(0.85)).active(|style| style.opacity(0.72))
+                                        .on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx)))
+                                        .flex().flex_col().gap(px(6.))
+                                        .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(142.), 7.))
+                                        .child(div().mt(px(4.)).font_family("Literata").text_size(px(15.)).child(item.title.clone().unwrap_or_else(|| "Untitled".into())))
+                                        .child(div().text_size(px(12.)).text_color(color).child(item.author_names()))
+                                }))));
+                        }
+                        if feed.warning.is_some() { view = view.child(Button::new("retry-explore").label("Try again").on_click(cx.listener(|this, _, _, cx| { this.explore_feed = None; this.load_explore(cx); cx.notify(); }))); }
+                    } else {
+                        view = view.child(div().text_size(px(13.)).text_color(color).child(if self.explore_loading { "Loading Explore…" } else { "Explore is unavailable right now." }))
+                            .children((!self.explore_loading).then(|| Button::new("load-explore").label("Try again").on_click(cx.listener(|this, _, _, cx| this.load_explore(cx)))));
+                    }
+                    return view.into_any_element();
                 }
                 if matches!(self.page, Page::Authors | Page::Series) {
                     let authors = self.page == Page::Authors;
@@ -1959,7 +2113,7 @@ impl Render for Shell {
                     )
                     .into_any_element()
             });
-        let content = div().w_full().child(self.account_view(cx));
+        let content = div().w_full().child(self.account_view(window, cx));
         let content = if matches!(self.page, Page::Book | Page::CatalogBook) && !cx.reduce_motion()
         {
             gpui_kit::base::animation::EffectTransition::new(std::time::Duration::from_millis(140))

@@ -263,7 +263,9 @@ pub fn cover(asin: &audible::Asin, url: &str) -> anyhow::Result<std::path::PathB
         Ok::<_, anyhow::Error>(bytes)
     })?;
     std::fs::create_dir_all(&directory)?;
-    std::fs::write(&path, bytes)?;
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(temporary, &path)?;
     Ok(path)
 }
 
@@ -517,4 +519,52 @@ pub fn save_appearance(settings: ui::ThemeSettings, version: u64) -> anyhow::Res
         return Ok(());
     }
     write_json(&appearance_path()?, &AppearanceRecord::from(settings))
+}
+
+pub struct ExploreFeed {
+    pub genres: Vec<audible::models::Category>,
+    pub new_releases: Vec<audible::models::Product>,
+    pub warning: Option<String>,
+}
+
+pub fn explore() -> anyhow::Result<ExploreFeed> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let _guard = rt.enter();
+    let client = Audible::from_store(store()?, PROFILE)?
+        .ok_or_else(|| anyhow::anyhow!("Sign in to explore Audible"))?;
+    let genres = rt.block_on(client.categories());
+    let query = audible::api::catalog::CatalogQuery {
+        sort: audible::api::catalog::CatalogSort::NewestFirst,
+        ..Default::default()
+    };
+    let releases = rt.block_on(client.search_catalog(&query));
+    let warning = match (&genres, &releases) {
+        (Err(_), Err(_)) => {
+            Some("Explore is unavailable right now. Search is still available.".into())
+        }
+        (Err(_), _) => Some("Genres are unavailable right now.".into()),
+        (_, Err(_)) => Some("New releases are unavailable right now.".into()),
+        _ => None,
+    };
+    Ok(ExploreFeed {
+        genres: genres.unwrap_or_default(),
+        new_releases: releases.map(|page| page.products).unwrap_or_default(),
+        warning,
+    })
+}
+
+pub fn browse_genre(
+    id: audible::models::CategoryId,
+) -> anyhow::Result<Vec<audible::models::Product>> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let _guard = rt.enter();
+    let client = Audible::from_store(store()?, PROFILE)?
+        .ok_or_else(|| anyhow::anyhow!("Sign in to explore Audible"))?;
+    Ok(rt
+        .block_on(client.search_catalog(&audible::api::catalog::CatalogQuery::category(id)))?
+        .products)
 }
