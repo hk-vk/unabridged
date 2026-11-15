@@ -21,6 +21,8 @@
 )]
 #![warn(missing_docs)]
 
+pub mod auth;
+pub mod credentials;
 pub mod error;
 pub mod locale;
 pub mod models;
