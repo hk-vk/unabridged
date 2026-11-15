@@ -148,8 +148,6 @@ pub(crate) struct RawContentLicense {
     #[serde(default)]
     pub asin: Option<String>,
     #[serde(default)]
-    pub acr: Option<String>,
-    #[serde(default)]
     pub status_code: Option<String>,
     #[serde(default)]
     pub drm_type: Option<String>,

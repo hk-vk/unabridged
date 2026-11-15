@@ -24,6 +24,8 @@
 pub mod api;
 pub mod auth;
 pub mod credentials;
+mod crypto;
+pub mod drm;
 pub mod error;
 pub mod http;
 pub mod locale;

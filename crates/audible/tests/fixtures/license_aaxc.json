@@ -1,0 +1,43 @@
+{
+  "content_license": {
+    "acr": "CR!7XQ4B3JH9V0KQ8WZ0Y0RNX6MCB1E",
+    "allowed_users": ["amzn1.account.AEXAMPLECUSTOMERID"],
+    "asin": "B002V5D7RU",
+    "content_metadata": {
+      "chapter_info": {
+        "brandIntroDurationMs": 2043,
+        "brandOutroDurationMs": 5016,
+        "chapters": [
+          {"length_ms": 15960, "start_offset_ms": 0, "start_offset_sec": 0, "title": "Opening Credits"},
+          {"length_ms": 3189521, "start_offset_ms": 15960, "start_offset_sec": 16, "title": "Chapter 1"}
+        ],
+        "is_accurate": true,
+        "runtime_length_ms": 3205481
+      },
+      "content_reference": {
+        "acr": "CR!7XQ4B3JH9V0KQ8WZ0Y0RNX6MCB1E",
+        "asin": "B002V5D7RU",
+        "codec": "mp4a.40.2",
+        "content_format": "AAX_44_128",
+        "content_size_in_bytes": 638582123,
+        "file_version": "1",
+        "marketplace": "AF2M0KC94RCEA",
+        "sku": "BK_HARP_005611",
+        "tempo": "1.0",
+        "version": "71553781"
+      },
+      "content_url": {"offline_url": "https://dcdn.audible.example/B002V5D7RU.aaxc?ss_sec=20&Signature=EXAMPLE"},
+      "last_position_heard": {"last_updated": "2026-11-01T20:14:51.357Z", "position_ms": 1234567, "status": "Exists"}
+    },
+    "drm_type": "Adrm",
+    "granted_right": "Ownership",
+    "license_id": "amzn1.adrm.license.EXAMPLE",
+    "license_response": "Wj+O4jFVY39OxFlet1UChBCn55ZTwhSJ+FXBt2UOmAs+FIU6LQwjmNR+l3ZmlDP/rJ/RbMqdiBbTM0dZUxrWeM2K4JnFKwOoT7Wdzi5PCIGLvk1/G2G6KkaKX3Djq6PP2zS2uVrGkbg2rGEassO1cRHz7jBYO6Ra/ttIWUhy4T0AW/kfm6zFJDWCtD2IDk309SkNyJW5wC/Iq7maHMrVWd53hOvfzvRy0vdL+hgMGJKQrdpBzZ7tLFbuwW0UtZJ8OOBxaQ7lhNxXdCsKQYIhv8G3zF/OEOj4ahzaJsDUk670h6IH1lHUK90emMLtUPj3nFs4/A1Ss2FbapeerYnBEakByoWph7Gy8D7BIVCto2Q=",
+    "message": "Eligibility check complete",
+    "request_id": "6E3B1C9A0F2D4E7A8B5C",
+    "requires_ad_supported_playback": false,
+    "status_code": "Granted",
+    "voucher_id": "cdn:EXAMPLE"
+  },
+  "response_groups": ["last_position_heard", "pdf_url", "content_reference", "chapter_info", "always-returned"]
+}

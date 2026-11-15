@@ -7,6 +7,7 @@
 //! [`HttpClient`]: crate::http::HttpClient
 
 pub mod catalog;
+pub mod content;
 pub mod library;
 pub mod position;
 

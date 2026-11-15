@@ -1,0 +1,12 @@
+{
+  "content_license": {
+    "acr": "CR!PODCASTEPISODEEXAMPLE0000000",
+    "asin": "B0PODCAST1",
+    "content_metadata": {
+      "content_reference": {"acr": "CR!PODCASTEPISODEEXAMPLE0000000", "asin": "B0PODCAST1", "codec": "mp4a.40.2", "content_format": "M4A"},
+      "content_url": {"offline_url": "https://podcast.audible.example/B0PODCAST1.m4a"}
+    },
+    "drm_type": "Mpeg",
+    "status_code": "Granted"
+  }
+}

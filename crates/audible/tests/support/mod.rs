@@ -40,3 +40,25 @@ pub fn client(server: &MockServer) -> HttpClient {
         max_delay: Duration::from_millis(50),
     })
 }
+
+/// Credentials matching the fixtures (`register_response.json`).
+pub fn credentials() -> audible::credentials::Credentials {
+    use audible::credentials::Credentials;
+    Credentials {
+        marketplace: audible::Marketplace::UnitedStates,
+        device_serial: audible::auth::DeviceSerial::new("Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7cDe0f")
+            .unwrap(),
+        device_type: "A2CZJZGLK2JJVM".into(),
+        device_name: Some("Test Audible for iPhone".into()),
+        customer_id: "amzn1.account.AEXAMPLECUSTOMERID".into(),
+        customer_name: Some("Example Owner".into()),
+        adp_token: Secret::new(TOKEN),
+        device_private_key: Secret::new(key_pem()),
+        access_token: Secret::new("Atna|EXAMPLE"),
+        access_token_expires: chrono::Utc::now() + chrono::Duration::hours(1),
+        refresh_token: Secret::new("Atnr|EXAMPLE"),
+        website_cookies: Default::default(),
+        store_authentication_cookie: None,
+        activation_bytes: None,
+    }
+}
