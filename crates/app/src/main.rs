@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use gpui_kit::{
     App, AppContext, AssetSource, Bounds, Context, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
-    div, point, px, size,
+    Render, SharedString, StatefulInteractiveElement, Styled, TitlebarOptions, Window,
+    WindowBounds, WindowOptions, div, point, px, size,
 };
 use ui::{
     ActiveTheme, Elevation, ElevationExt, Icon, ThemeSettings,
@@ -312,6 +312,10 @@ fn main() {
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    appears_transparent: cfg!(target_os = "macos"),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             |_, cx| {
