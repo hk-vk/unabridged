@@ -1,7 +1,7 @@
 //! Book cover art with the cover elevation.
 
 use gpui_kit::{
-    App, IntoElement, ObjectFit, ParentElement, RenderOnce, SharedString, Styled, StyledImage as _,
+    App, ImageSource, IntoElement, ObjectFit, ParentElement, RenderOnce, Styled, StyledImage as _,
     Window, div, img, px, relative,
 };
 
@@ -24,7 +24,7 @@ pub enum CoverSize {
 /// and the shadow of its elevation level.
 #[derive(IntoElement)]
 pub struct Cover {
-    source: SharedString,
+    source: ImageSource,
     size: CoverSize,
     radius: f32,
     elevation: Elevation,
@@ -32,7 +32,7 @@ pub struct Cover {
 
 impl Cover {
     /// A cover loaded from `source` (an asset path, URL or file path).
-    pub fn new(source: impl Into<SharedString>, size: CoverSize, radius: f32) -> Self {
+    pub fn new(source: impl Into<ImageSource>, size: CoverSize, radius: f32) -> Self {
         Self {
             source: source.into(),
             size,
