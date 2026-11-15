@@ -102,6 +102,12 @@ icons! {
     Pip => "pip",
     /// Show in Finder (`folder-open`).
     Folder => "folder",
+    /// Appearance settings (`paint-board`).
+    PaintBoard => "paint-board",
+    /// Account (`user-circle`).
+    UserCircle => "user-circle",
+    /// Storage (`hard-drive`).
+    HardDrive => "hard-drive",
     /// Remove (`delete-02`).
     Delete => "delete",
     /// Try again (`refresh-01`).

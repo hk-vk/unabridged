@@ -331,13 +331,23 @@ impl Shell {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
-        let account_label = match &self.account {
-            Account::Ready(library) => format!(
-                "Audible {}{}",
-                library.marketplace,
-                if library.offline { " · Offline" } else { "" }
+        let (account_label, status, online) = match &self.account {
+            Account::Ready(library) => (
+                format!("Audible {}", library.marketplace),
+                if library.offline {
+                    "Offline"
+                } else {
+                    "Connected"
+                },
+                !library.offline,
             ),
-            _ => "Not connected".into(),
+            Account::Loading => ("Audible".into(), "Connecting…", false),
+            _ => ("Audible".into(), "Not signed in", false),
+        };
+        let status_color = if online {
+            gpui_kit::rgb(0x34c759).into()
+        } else {
+            theme.colors.ink_secondary
         };
         div()
             .w(px(220.))
@@ -363,14 +373,47 @@ impl Shell {
             .child(self.nav("Series", Icon::Layers, Page::Series, cx))
             .child(self.nav("Finished", Icon::CheckmarkCircle, Page::Finished, cx))
             .child(div().flex_1())
-            .child(self.nav("Appearance", Icon::Settings, Page::Settings, cx))
+            .child(self.nav("Settings", Icon::Settings, Page::Settings, cx))
             .child(
                 div()
+                    .mt(px(6.))
+                    .mb(px(18.))
                     .px(px(10.))
-                    .pb(px(25.))
-                    .type_style(ui::text::CAPTION)
-                    .text_color(theme.colors.ink_secondary)
-                    .child(account_label),
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(
+                        ui::icon(Icon::UserCircle)
+                            .size(px(22.))
+                            .text_color(theme.colors.ink_secondary),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .type_style(ui::text::CAPTION_MEDIUM)
+                                    .text_color(theme.colors.ink)
+                                    .truncate()
+                                    .child(account_label),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(5.))
+                                    .child(div().size(px(6.)).rounded_full().bg(status_color))
+                                    .child(
+                                        div()
+                                            .type_style(ui::text::FOOTNOTE)
+                                            .text_color(theme.colors.ink_secondary)
+                                            .child(status),
+                                    ),
+                            ),
+                    ),
             )
             .into_any_element()
     }
@@ -395,7 +438,7 @@ impl Render for Shell {
             Page::Series | Page::SeriesBooks => "Series",
             Page::Book | Page::CatalogBook => "Book",
             Page::NowPlaying => "Now playing",
-            Page::Settings => "Appearance",
+            Page::Settings => "Settings",
         };
         let notice = self.notice_view(cx);
         let download_panel = self.download_panel(cx);

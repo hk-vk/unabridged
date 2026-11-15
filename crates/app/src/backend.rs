@@ -247,8 +247,15 @@ pub fn sign_in(session: LoginSession, redirect: String) -> anyhow::Result<Librar
     fetch_library(&rt, &client)
 }
 
+/// Where an account's downloaded books live.
+pub fn books_directory(key: &str) -> Option<std::path::PathBuf> {
+    account_directory(key)
+        .ok()
+        .map(|directory| directory.join("Books"))
+}
+
 pub fn downloaded_path(key: &str, asin: &audible::Asin) -> Option<std::path::PathBuf> {
-    let directory = account_directory(key).ok()?.join("Books");
+    let directory = books_directory(key)?;
     ["m4b", "m4a"]
         .iter()
         .map(|extension| directory.join(format!("{asin}.{extension}")))
