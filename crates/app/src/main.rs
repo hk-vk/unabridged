@@ -28,6 +28,7 @@ enum Page {
     Progress,
     Explore,
     OnThisMac,
+    Bookmarks,
     Search,
     Finished,
     Authors,
@@ -138,6 +139,8 @@ struct Shell {
     seek_generation: u64,
     navigation_generation: u64,
     chapters_open: bool,
+    bookmarks: Vec<(audible::Asin, u64)>,
+    bookmarks_loading: bool,
     account: Account,
     marketplace: Entity<SelectState<SearchableVec<&'static str>>>,
     redirect: Entity<InputState>,
@@ -196,6 +199,8 @@ impl Shell {
             seek_generation: 0,
             navigation_generation: 0,
             chapters_open: false,
+            bookmarks: Vec::new(),
+            bookmarks_loading: false,
             account: Account::Loading,
             marketplace,
             redirect,
@@ -452,6 +457,73 @@ impl Shell {
         .detach();
     }
 
+    fn load_bookmarks(&mut self, cx: &mut Context<Self>) {
+        let Account::Ready(library) = &self.account else {
+            return;
+        };
+        let key = library.account_key.clone();
+        let asins = library
+            .items
+            .iter()
+            .map(|item| item.asin.clone())
+            .collect::<Vec<_>>();
+        self.bookmarks_loading = true;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::bookmarks(&key, &asins) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.bookmarks_loading = false;
+                match result {
+                    Ok(bookmarks) => this.bookmarks = bookmarks,
+                    Err(error) => {
+                        this.download_notice = Some(format!("Could not load bookmarks: {error}"))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn change_bookmark(
+        &mut self,
+        asin: audible::Asin,
+        position: u64,
+        add: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Account::Ready(library) = &self.account else {
+            return;
+        };
+        let key = library.account_key.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(
+                    async move { backend::update_bookmark(&key, &asin, position, add) },
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.download_notice = Some(match result {
+                    Ok(()) if add => "Bookmark saved on this Mac.".into(),
+                    Ok(()) => "Bookmark removed.".into(),
+                    Err(error) => format!("Could not save bookmark: {error}"),
+                });
+                this.load_bookmarks(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn add_current_bookmark(&mut self, cx: &mut Context<Self>) {
+        if let Some(player) = &self.player {
+            let asin = player.asin.clone();
+            let position = (player.player.position().max(0.) * 1000.) as u64;
+            self.change_bookmark(asin, position, true, cx);
+        }
+    }
+
     fn load_chapters(&mut self, cx: &mut Context<Self>) {
         let Some(player) = &self.player else { return };
         let asin = player.asin.clone();
@@ -516,17 +588,32 @@ impl Shell {
         title: String,
         cx: &mut Context<Self>,
     ) {
+        self.start_player_at(key, asin, title, None, cx);
+    }
+
+    fn start_player_at(
+        &mut self,
+        key: String,
+        asin: audible::Asin,
+        title: String,
+        start_at: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         if self.loading_player {
             return;
         }
         if self.player.as_ref().is_some_and(|p| p.asin == asin) {
             if let Some(active) = &mut self.player {
+                if let Some(position) = start_at {
+                    active.player.seek(position as f64 / 1000.);
+                }
                 if let Err(error) = active.player.play() {
                     self.download_notice = Some(format!("Could not resume playback: {error}"));
                 } else {
                     active.was_playing = true;
                 }
             }
+            self.open_player(cx);
             cx.notify();
             return;
         }
@@ -541,15 +628,16 @@ impl Shell {
         self.download_notice = Some(format!("Loading {title}…"));
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn({
+            let result = if let Some(position) = start_at {
+                Ok(Some(position))
+            } else {
+                cx.background_spawn({
                     let asin = asin.clone();
-                    {
-                        let key = key.clone();
-                        async move { backend::position(&key, &asin) }
-                    }
+                    let key = key.clone();
+                    async move { backend::position(&key, &asin) }
                 })
-                .await;
+                .await
+            };
             let _ = this.update(cx, |this, cx| {
                 this.loading_player = false;
                 match result.and_then(|position| {
@@ -873,7 +961,22 @@ impl Shell {
                             .variant(ButtonVariant::Glass(palette))
                             .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
                     )
-                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px(px(12.))
+                            .text_size(px(12.))
+                            .text_color(palette.on_field_muted)
+                            .children(self.download_notice.iter().cloned()),
+                    )
+                    .child(
+                        Button::new("add-bookmark")
+                            .label("Bookmark")
+                            .icon(Icon::BookmarkAdd)
+                            .variant(ButtonVariant::Glass(palette))
+                            .on_click(cx.listener(|this, _, _, cx| this.add_current_bookmark(cx))),
+                    )
                     .child(
                         Button::new("show-chapters")
                             .label(if self.chapters_open {
@@ -1040,6 +1143,9 @@ impl Shell {
             .selected(self.page == page)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.page = page;
+                if page == Page::Bookmarks {
+                    this.load_bookmarks(cx);
+                }
                 cx.notify();
             }))
     }
@@ -1179,6 +1285,33 @@ impl Shell {
                     .child(Button::new("restart").label("Sign in again").on_click(cx.listener(|this, _, _, cx| { this.account = Account::SignedOut; cx.notify(); }))))
                 .into_any_element(),
             Account::Ready(library) => {
+                if self.page == Page::Bookmarks {
+                    if self.bookmarks_loading { return base().child(copy("Loading bookmarks…".into())).into_any_element(); }
+                    if self.bookmarks.is_empty() { return base().child(heading("No bookmarks yet")).child(copy("Save a moment from the player and find it here. Bookmarks are stored on this Mac.".into())).into_any_element(); }
+                    return div().flex().flex_col().gap(px(12.))
+                        .child(div().text_size(px(13.)).text_color(color).child("Saved on this Mac"))
+                        .children(self.bookmarks.iter().filter_map(|(asin, position)| {
+                            let item = library.items.iter().find(|item| &item.asin == asin)?;
+                            let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
+                            let time = model::format::clock(std::time::Duration::from_millis(*position));
+                            let key = library.account_key.clone();
+                            let play_asin = asin.clone();
+                            let remove_asin = asin.clone();
+                            let bookmark_position = *position;
+                            let downloaded = backend::downloaded_path(&key, asin).is_some();
+                            let play_title = title.clone();
+                            Some(div().flex().items_center().gap(px(16.)).py(px(14.)).border_b_1().border_color(hairline)
+                                .child(div().flex_1().flex().flex_col().gap(px(4.))
+                                    .child(div().font_family("Literata").text_size(px(18.)).child(title))
+                                    .child(div().text_size(px(12.)).text_color(color).child(time)))
+                                .child(if downloaded {
+                                    Button::new(format!("bookmark-play-{asin}-{position}")).label("Play from here").icon(Icon::Play).on_click(cx.listener(move |this, _, _, cx| this.start_player_at(key.clone(), play_asin.clone(), play_title.clone(), Some(bookmark_position), cx)))
+                                } else {
+                                    Button::new(format!("bookmark-book-{asin}-{position}")).label("Open book").on_click(cx.listener(move |this, _, _, cx| this.open_book(play_asin.clone(), cx)))
+                                })
+                                .child(Button::new(format!("bookmark-remove-{asin}-{position}")).label("Remove").on_click(cx.listener(move |this, _, _, cx| this.change_bookmark(remove_asin.clone(), bookmark_position, false, cx)))))
+                        })).into_any_element();
+                }
                 if self.page == Page::Library && !library.items.is_empty() {
                     let listening: Vec<_> = library.items.iter().filter(|item| book_progress(item).unwrap_or(0.) > 0. && !book_finished(item)).collect();
                     let recent: Vec<_> = library.items.iter().take(8).collect();
@@ -1396,6 +1529,7 @@ impl Render for Shell {
             Page::Progress => "In progress",
             Page::Explore => "Explore",
             Page::OnThisMac => "On this Mac",
+            Page::Bookmarks => "Bookmarks",
             Page::Search => "Search",
             Page::Finished => "Finished",
             Page::Authors | Page::AuthorBooks => "Authors",
@@ -1685,6 +1819,7 @@ impl Render for Shell {
                     .child(self.nav("Library", Icon::Library, Page::Library, cx))
                     .child(self.nav("In progress", Icon::Clock, Page::Progress, cx))
                     .child(self.nav("On this Mac", Icon::Download, Page::OnThisMac, cx))
+                    .child(self.nav("Bookmarks", Icon::Bookmark, Page::Bookmarks, cx))
                     .child(div().h(px(20.)))
                     .child(SidebarHeader::new("Browse"))
                     .child(self.nav("Authors", Icon::User, Page::Authors, cx))

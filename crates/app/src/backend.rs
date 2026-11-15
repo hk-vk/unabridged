@@ -314,6 +314,22 @@ mod tests {
     }
 
     #[test]
+    fn bookmark_file_adds_deduplicates_and_removes_positions() {
+        let directory = std::env::temp_dir().join(format!(
+            "better-audible-bookmarks-test-{}",
+            std::process::id()
+        ));
+        let path = directory.join("book.json");
+        update_bookmark_file(&path, 10_000, true).unwrap();
+        update_bookmark_file(&path, 5_000, true).unwrap();
+        update_bookmark_file(&path, 10_000, true).unwrap();
+        assert_eq!(read_bookmark_positions(&path).unwrap(), vec![5_000, 10_000]);
+        update_bookmark_file(&path, 5_000, false).unwrap();
+        assert_eq!(read_bookmark_positions(&path).unwrap(), vec![10_000]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn obsolete_position_writes_are_discarded_before_accessing_credentials() {
         let asin = audible::Asin::new("TESTPOSITION").unwrap();
         let old = register_save(&asin);
@@ -342,4 +358,61 @@ pub fn chapters(key: &str, asin: &audible::Asin) -> anyhow::Result<audible::mode
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .ok_or_else(|| error.into()),
     }
+}
+
+static BOOKMARK_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn bookmark_path(key: &str, asin: &audible::Asin) -> anyhow::Result<std::path::PathBuf> {
+    Ok(account_directory(key)?
+        .join("Bookmarks")
+        .join(format!("{asin}.json")))
+}
+
+fn read_bookmark_positions(path: &std::path::Path) -> anyhow::Result<Vec<u64>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub fn bookmarks(key: &str, asins: &[audible::Asin]) -> anyhow::Result<Vec<(audible::Asin, u64)>> {
+    let _guard = BOOKMARK_SERIAL
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Could not access bookmarks"))?;
+    let mut result = Vec::new();
+    for asin in asins {
+        result.extend(
+            read_bookmark_positions(&bookmark_path(key, asin)?)?
+                .into_iter()
+                .map(|position| (asin.clone(), position)),
+        );
+    }
+    Ok(result)
+}
+
+pub fn update_bookmark(
+    key: &str,
+    asin: &audible::Asin,
+    position: u64,
+    add: bool,
+) -> anyhow::Result<()> {
+    let _guard = BOOKMARK_SERIAL
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Could not access bookmarks"))?;
+    let path = bookmark_path(key, asin)?;
+    update_bookmark_file(&path, position, add)
+}
+
+fn update_bookmark_file(path: &std::path::Path, position: u64, add: bool) -> anyhow::Result<()> {
+    let mut positions = read_bookmark_positions(path)?;
+    if add {
+        if !positions.contains(&position) {
+            positions.push(position);
+            positions.sort_unstable();
+        }
+    } else {
+        positions.retain(|saved| *saved != position);
+    }
+    write_json(path, &positions)
 }
