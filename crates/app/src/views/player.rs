@@ -148,27 +148,6 @@ impl Shell {
                             .hover_fill(palette.on_field_track)
                             .tooltip("Open mini player")
                             .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
-                    )
-                    .child(
-                        Chip::new("show-read-along")
-                            .label("Read along")
-                            .icon(Icon::Subtitle, palette.on_field)
-                            .height(ui::metrics::size::POPUP)
-                            .style(ChipStyle::Tint {
-                                fill: if self.read_along_open {
-                                    palette.on_field_track
-                                } else {
-                                    gpui_kit::transparent_black()
-                                },
-                                content: palette.on_field,
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.read_along_open = !this.read_along_open;
-                                if this.read_along_open {
-                                    this.ensure_read_along(cx);
-                                }
-                                cx.notify();
-                            })),
                     ),
             )
             .children(self.download_notice.as_ref().map(|message| {
@@ -323,6 +302,28 @@ impl Shell {
                                         }),
                                     cx,
                                 ),
+                            )
+                            .child(
+                                Chip::new("show-read-along")
+                                    .label("Read along")
+                                    .icon(Icon::Subtitle, palette.on_field)
+                                    .height(ui::metrics::size::FIELD_PILL)
+                                    // Filled while on, like a pressed toggle.
+                                    .style(if self.read_along_open {
+                                        ChipStyle::Tint {
+                                            fill: palette.on_field,
+                                            content: palette.field_deep,
+                                        }
+                                    } else {
+                                        field_pill
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.read_along_open = !this.read_along_open;
+                                        if this.read_along_open {
+                                            this.ensure_read_along(cx);
+                                        }
+                                        cx.notify();
+                                    })),
                             ),
                     )
                     .child(
