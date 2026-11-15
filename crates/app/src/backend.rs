@@ -7,37 +7,76 @@ use std::sync::Arc;
 
 const PROFILE: &str = "default";
 
-// Keep Keychain access to the beginning of a session and credential updates.
-// Operations otherwise restore independent clients and would repeatedly ask
-// macOS for the same item, including during periodic progress sync.
+// Keep Keychain access to the beginning of a session and to real credential
+// changes. Each Keychain read or write can show a macOS access prompt, so:
+// * a successful read is cached for the session;
+// * a failed or cancelled read is remembered too, so background work (progress
+//   sync, chapters) does not ask again; an explicit restore clears it;
+// * a refreshed access token is kept in memory only. The refresh token stays
+//   valid, so the next launch refreshes again instead of rewriting the item.
 struct SessionStore {
     inner: Arc<dyn CredentialStore>,
-    cache: std::sync::Mutex<
-        std::collections::HashMap<String, Option<audible::credentials::Credentials>>,
-    >,
+    state: std::sync::Mutex<SessionState>,
+}
+
+#[derive(Default)]
+struct SessionState {
+    loaded: std::collections::HashMap<String, Option<audible::credentials::Credentials>>,
+    failed: std::collections::HashMap<String, String>,
 }
 
 impl SessionStore {
     fn new(inner: Arc<dyn CredentialStore>) -> Self {
         Self {
             inner,
-            cache: Default::default(),
+            state: Default::default(),
+        }
+    }
+
+    fn state(&self) -> audible::Result<std::sync::MutexGuard<'_, SessionState>> {
+        self.state
+            .lock()
+            .map_err(|_| audible::Error::CredentialStore("session store lock failed".into()))
+    }
+
+    /// Forgets a failed read so the next load asks the Keychain again.
+    fn retry(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.failed.clear();
         }
     }
 }
 
+/// Whether `new` differs from `old` only in the short-lived access token.
+fn only_access_token_changed(
+    old: &audible::credentials::Credentials,
+    new: &audible::credentials::Credentials,
+) -> bool {
+    let mut old = old.clone();
+    old.access_token = new.access_token.clone();
+    old.access_token_expires = new.access_token_expires;
+    &old == new
+}
+
 impl CredentialStore for SessionStore {
     fn load(&self, profile: &str) -> audible::Result<Option<audible::credentials::Credentials>> {
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|_| audible::Error::CredentialStore("session store lock failed".into()))?;
-        if let Some(value) = cache.get(profile) {
+        let mut state = self.state()?;
+        if let Some(value) = state.loaded.get(profile) {
             return Ok(value.clone());
         }
-        let value = self.inner.load(profile)?;
-        cache.insert(profile.to_owned(), value.clone());
-        Ok(value)
+        if let Some(message) = state.failed.get(profile) {
+            return Err(audible::Error::CredentialStore(message.clone()));
+        }
+        match self.inner.load(profile) {
+            Ok(value) => {
+                state.loaded.insert(profile.to_owned(), value.clone());
+                Ok(value)
+            }
+            Err(error) => {
+                state.failed.insert(profile.to_owned(), error.to_string());
+                Err(error)
+            }
+        }
     }
 
     fn save(
@@ -45,46 +84,68 @@ impl CredentialStore for SessionStore {
         profile: &str,
         credentials: &audible::credentials::Credentials,
     ) -> audible::Result<()> {
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|_| audible::Error::CredentialStore("session store lock failed".into()))?;
-        if let Err(error) = self.inner.save(profile, credentials) {
-            cache.remove(profile);
+        let mut state = self.state()?;
+        let unchanged = matches!(
+            state.loaded.get(profile),
+            Some(Some(old)) if only_access_token_changed(old, credentials)
+        );
+        if !unchanged && let Err(error) = self.inner.save(profile, credentials) {
+            state.loaded.remove(profile);
             return Err(error);
         }
-        cache.insert(profile.to_owned(), Some(credentials.clone()));
+        state.failed.remove(profile);
+        state
+            .loaded
+            .insert(profile.to_owned(), Some(credentials.clone()));
         Ok(())
     }
 
     fn delete(&self, profile: &str) -> audible::Result<()> {
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|_| audible::Error::CredentialStore("session store lock failed".into()))?;
+        let mut state = self.state()?;
         if let Err(error) = self.inner.delete(profile) {
-            cache.remove(profile);
+            state.loaded.remove(profile);
             return Err(error);
         }
-        cache.insert(profile.to_owned(), None);
+        state.failed.remove(profile);
+        state.loaded.insert(profile.to_owned(), None);
         Ok(())
     }
 }
 
-#[cfg(target_os = "macos")]
-fn store() -> anyhow::Result<Arc<dyn CredentialStore>> {
-    static STORE: std::sync::OnceLock<Arc<dyn CredentialStore>> = std::sync::OnceLock::new();
-    Ok(STORE
-        .get_or_init(|| {
-            Arc::new(SessionStore::new(Arc::new(
-                audible::credentials::KeychainStore::new(),
-            )))
-        })
-        .clone())
+/// The process-wide session store.
+fn session() -> &'static Arc<SessionStore> {
+    static STORE: std::sync::OnceLock<Arc<SessionStore>> = std::sync::OnceLock::new();
+    STORE.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        let inner: Arc<dyn CredentialStore> = Arc::new(audible::credentials::KeychainStore::new());
+        #[cfg(not(target_os = "macos"))]
+        let inner: Arc<dyn CredentialStore> = Arc::new(Unsupported);
+        Arc::new(SessionStore::new(inner))
+    })
 }
-#[cfg(not(target_os = "macos"))]
+
 fn store() -> anyhow::Result<Arc<dyn CredentialStore>> {
-    anyhow::bail!("Account storage is currently supported on macOS only")
+    anyhow::ensure!(
+        cfg!(target_os = "macos"),
+        "Account storage is currently supported on macOS only"
+    );
+    Ok(session().clone())
+}
+
+#[cfg(not(target_os = "macos"))]
+struct Unsupported;
+
+#[cfg(not(target_os = "macos"))]
+impl CredentialStore for Unsupported {
+    fn load(&self, _: &str) -> audible::Result<Option<audible::credentials::Credentials>> {
+        Ok(None)
+    }
+    fn save(&self, _: &str, _: &audible::credentials::Credentials) -> audible::Result<()> {
+        Ok(())
+    }
+    fn delete(&self, _: &str) -> audible::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -157,6 +218,8 @@ pub fn restore() -> anyhow::Result<Option<Library>> {
         .enable_all()
         .build()?;
     let _guard = rt.enter();
+    // Launch and "Try loading again" are the moments to ask the Keychain anew.
+    session().retry();
     let Some(client) = Audible::from_store(store()?, PROFILE)? else {
         return Ok(None);
     };
@@ -363,6 +426,8 @@ mod tests {
         struct CountingStore {
             inner: audible::credentials::MemoryStore,
             reads: AtomicUsize,
+            writes: AtomicUsize,
+            deny: std::sync::atomic::AtomicBool,
         }
         impl CredentialStore for CountingStore {
             fn load(
@@ -370,6 +435,9 @@ mod tests {
                 profile: &str,
             ) -> audible::Result<Option<audible::credentials::Credentials>> {
                 self.reads.fetch_add(1, Ordering::SeqCst);
+                if self.deny.load(Ordering::SeqCst) {
+                    return Err(audible::Error::CredentialStore("User canceled".into()));
+                }
                 self.inner.load(profile)
             }
             fn save(
@@ -377,6 +445,7 @@ mod tests {
                 profile: &str,
                 credentials: &audible::credentials::Credentials,
             ) -> audible::Result<()> {
+                self.writes.fetch_add(1, Ordering::SeqCst);
                 self.inner.save(profile, credentials)
             }
             fn delete(&self, profile: &str) -> audible::Result<()> {
@@ -398,10 +467,34 @@ mod tests {
             }))
             .unwrap();
         store.save("default", &credentials).unwrap();
-        assert_eq!(store.load("default").unwrap(), Some(credentials));
+        assert_eq!(persistent.writes.load(Ordering::SeqCst), 1);
+        assert_eq!(store.load("default").unwrap(), Some(credentials.clone()));
+
+        // A refreshed access token stays in memory: no Keychain write.
+        let mut refreshed = credentials.clone();
+        refreshed.access_token = "fresh".into();
+        store.save("default", &refreshed).unwrap();
+        assert_eq!(persistent.writes.load(Ordering::SeqCst), 1);
+        assert_eq!(store.load("default").unwrap(), Some(refreshed.clone()));
+        // A real change (new refresh token) is written.
+        refreshed.refresh_token = "rotated".into();
+        store.save("default", &refreshed).unwrap();
+        assert_eq!(persistent.writes.load(Ordering::SeqCst), 2);
+
         store.delete("default").unwrap();
         assert!(store.load("default").unwrap().is_none());
         assert_eq!(persistent.reads.load(Ordering::SeqCst), 1);
+
+        // A cancelled prompt is not repeated until an explicit retry.
+        let denying = Arc::new(CountingStore::default());
+        denying.deny.store(true, Ordering::SeqCst);
+        let store = SessionStore::new(denying.clone());
+        assert!(store.load("default").is_err());
+        assert!(store.load("default").is_err());
+        assert_eq!(denying.reads.load(Ordering::SeqCst), 1);
+        store.retry();
+        assert!(store.load("default").is_err());
+        assert_eq!(denying.reads.load(Ordering::SeqCst), 2);
     }
     #[test]
     fn position_cache_round_trips_and_account_paths_reject_traversal() {
