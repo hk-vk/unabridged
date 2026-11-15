@@ -1,4 +1,4 @@
-//! Build the macOS audio bridge.
+//! Build the macOS audio bridge and the read-along transcription helper.
 
 fn main() {
     println!("cargo:rerun-if-changed=src/player.m");
@@ -12,5 +12,33 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=AVFoundation");
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=AppKit");
+        build_transcriber();
+    }
+}
+
+/// Compiles `ba-transcribe` (Apple SpeechAnalyzer, macOS 26+) next to the app
+/// binary. Read along reports itself unavailable when this is missing.
+fn build_transcriber() {
+    println!("cargo:rerun-if-changed=src/transcribe.swift");
+    let Some(out_dir) = std::env::var_os("OUT_DIR").map(std::path::PathBuf::from) else {
+        return;
+    };
+    // OUT_DIR is target/<profile>/build/<crate>-<hash>/out.
+    let Some(profile_dir) = out_dir.ancestors().nth(3) else {
+        return;
+    };
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("x86_64") => "x86_64",
+        _ => "arm64",
+    };
+    let status = std::process::Command::new("xcrun")
+        .args(["swiftc", "-O", "-target"])
+        .arg(format!("{arch}-apple-macos26.0"))
+        .arg("src/transcribe.swift")
+        .arg("-o")
+        .arg(profile_dir.join("ba-transcribe"))
+        .status();
+    if !matches!(status, Ok(status) if status.success()) {
+        println!("cargo:warning=Read-along helper (ba-transcribe) was not built");
     }
 }

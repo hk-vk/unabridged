@@ -219,6 +219,28 @@ impl Shell {
                             .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
                     )
                     .child(
+                        Chip::new("show-read-along")
+                            .label("Read along")
+                            .icon(Icon::Subtitle, palette.on_field)
+                            .height(ui::metrics::size::POPUP)
+                            .style(ChipStyle::Tint {
+                                fill: if self.read_along_open {
+                                    palette.on_field_track
+                                } else {
+                                    gpui_kit::transparent_black()
+                                },
+                                content: palette.on_field,
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.read_along_open = !this.read_along_open;
+                                if this.read_along_open {
+                                    this.chapters_open = false;
+                                    this.ensure_read_along(cx);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
                         Chip::new("show-chapters")
                             .label("Chapters")
                             .icon(Icon::Chapters, palette.on_field)
@@ -236,6 +258,9 @@ impl Shell {
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.chapters_open = !this.chapters_open;
+                                if this.chapters_open {
+                                    this.read_along_open = false;
+                                }
                                 cx.notify();
                             })),
                     ),
@@ -312,19 +337,30 @@ impl Shell {
                                     .text_color(palette.on_field_muted)
                                     .child(credit),
                             )
-                            .child(
-                                div()
-                                    .mt(px(40.))
-                                    .font_family("Geist Pixel")
-                                    .text_size(px(if compact { 70. } else { 104. }))
-                                    .child(left),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(8.))
-                                    .type_style(ui::text::BOOK_CAPTION)
-                                    .child(caption),
-                            )
+                            .when(self.read_along_open, |column| {
+                                column.child(
+                                    div()
+                                        .mt(px(28.))
+                                        .h(px(if compact { 220. } else { 340. }))
+                                        .child(self.read_along_view(&palette, cx)),
+                                )
+                            })
+                            .when(!self.read_along_open, |column| {
+                                column
+                                    .child(
+                                        div()
+                                            .mt(px(40.))
+                                            .font_family("Geist Pixel")
+                                            .text_size(px(if compact { 70. } else { 104. }))
+                                            .child(left),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt(px(8.))
+                                            .type_style(ui::text::BOOK_CAPTION)
+                                            .child(caption),
+                                    )
+                            })
                             .child(div().mt(px(32.)).child(scrubber))
                             .child(
                                 div()
@@ -453,4 +489,180 @@ impl Shell {
             )
             .into_any_element()
     }
+}
+
+impl Shell {
+    /// The read-along transcript: the spoken line bright, the rest soft,
+    /// following playback. Click a line to jump there.
+    fn read_along_view(
+        &self,
+        palette: &ui::theme::BookPalette,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let message = |text: &'static str| {
+            div()
+                .type_style(ui::text::BODY)
+                .text_color(palette.on_field_muted)
+                .child(text)
+                .into_any_element()
+        };
+        let Some(active) = &self.player else {
+            return div().into_any_element();
+        };
+        if backend::downloaded_path(&active.account_key, &active.asin).is_none() {
+            return message("Read along works for books downloaded to this Mac.");
+        }
+        let Some(read) = &self.read_along else {
+            return transcript_placeholder("Getting ready", palette, cx);
+        };
+        let Ok(job) = read.job.lock() else {
+            return div().into_any_element();
+        };
+        match &job.phase {
+            transcript::Phase::Checking if job.lines.is_empty() => {
+                return transcript_placeholder("Getting ready", palette, cx);
+            }
+            transcript::Phase::NeedsModel => {
+                return div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.))
+                    .child(
+                        div()
+                            .type_style(ui::text::BODY)
+                            .text_color(palette.on_field_muted)
+                            .child(
+                                "Read along transcribes each chapter on your Mac with Apple’s speech model. Nothing leaves your Mac. The model is a one-time download.",
+                            ),
+                    )
+                    .child(
+                        div().flex().child(
+                            Chip::new("download-speech-model")
+                                .label("Download speech model")
+                                .icon(Icon::Download, palette.on_field)
+                                .height(ui::metrics::size::POPUP)
+                                .style(ChipStyle::Outline {
+                                    outline: palette.on_field_track,
+                                    content: palette.on_field,
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.download_speech_model(cx)
+                                })),
+                        ),
+                    )
+                    .into_any_element();
+            }
+            transcript::Phase::Downloading(progress) => {
+                return div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .w(px(280.))
+                    .child(
+                        div()
+                            .type_style(ui::text::CAPTION.tabular())
+                            .text_color(palette.on_field_muted)
+                            .child(format!("Downloading speech model… {:.0}%", progress * 100.)),
+                    )
+                    .child(
+                        SegmentedProgress::new(0., *progress, 0.)
+                            .colors(palette.on_field, palette.on_field_track),
+                    )
+                    .into_any_element();
+            }
+            transcript::Phase::Unsupported(text) | transcript::Phase::Failed(text)
+                if job.lines.is_empty() =>
+            {
+                return div()
+                    .type_style(ui::text::BODY)
+                    .text_color(palette.on_field_muted)
+                    .child(text.clone())
+                    .into_any_element();
+            }
+            transcript::Phase::Transcribing if job.lines.is_empty() => {
+                return transcript_placeholder("Transcribing this chapter", palette, cx);
+            }
+            _ => {}
+        }
+        let position = active.player.position();
+        let duration = active.player.duration().max(1.);
+        let current = transcript::current_line(&job.lines, position);
+        let still_working = job.phase == transcript::Phase::Transcribing;
+        let mut list = div()
+            .id("read-along")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.read_along_scroll)
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .pb(px(120.));
+        for (index, line) in job.lines.iter().enumerate() {
+            let target = (line.start / duration).clamp(0., 1.) as f32;
+            let color = match current {
+                Some(spoken) if spoken == index => palette.on_field,
+                Some(spoken) if index < spoken => palette.on_field_muted.opacity(0.55),
+                _ => palette.on_field_muted,
+            };
+            list = list.child(
+                div()
+                    .id(("read-along-line", index))
+                    .cursor_pointer()
+                    .px(px(8.))
+                    .py(px(4.))
+                    .rounded(px(8.))
+                    .hover(|style| style.bg(palette.on_field_track))
+                    .type_style(ui::text::BOOK_ROW)
+                    .text_color(color)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.seek_fraction(target, cx);
+                        if let Some(read) = &mut this.read_along {
+                            read.followed = None;
+                        }
+                    }))
+                    .child(line.text.clone()),
+            );
+        }
+        if still_working {
+            list = list.child(
+                div()
+                    .px(px(8.))
+                    .type_style(ui::text::CAPTION)
+                    .text_color(palette.on_field_muted)
+                    .child(ShimmerText::new("Transcribing…")),
+            );
+        }
+        list.into_any_element()
+    }
+}
+
+/// Shimmering label and line-shaped bars while a transcript is on its way.
+fn transcript_placeholder(
+    label: &'static str,
+    palette: &ui::theme::BookPalette,
+    cx: &Context<Shell>,
+) -> gpui_kit::AnyElement {
+    let reduced_motion = cx.reduce_motion();
+    let mut column = div().flex().flex_col().gap(px(14.)).child(
+        div()
+            .type_style(ui::text::CAPTION)
+            .text_color(palette.on_field_muted)
+            .child(ShimmerText::new(label)),
+    );
+    for (index, width) in [420., 360., 400., 300., 380.].into_iter().enumerate() {
+        column = column.child(if reduced_motion {
+            div()
+                .w(px(width))
+                .h(px(16.))
+                .rounded(px(8.))
+                .bg(palette.on_field_track)
+                .into_any_element()
+        } else {
+            div()
+                .id(("transcript-loading", index))
+                .child(Skeleton::new().w(px(width)).h(px(16.)).rounded(px(8.)))
+                .into_any_element()
+        });
+    }
+    column.into_any_element()
 }

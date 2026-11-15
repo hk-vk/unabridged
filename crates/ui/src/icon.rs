@@ -102,6 +102,8 @@ icons! {
     Pip => "pip",
     /// Show in Finder (`folder-open`).
     Folder => "folder",
+    /// Read along (`subtitle`).
+    Subtitle => "subtitle",
     /// Appearance settings (`paint-board`).
     PaintBoard => "paint-board",
     /// Account (`user-circle`).

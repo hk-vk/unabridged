@@ -312,3 +312,112 @@ impl ActivePlayer {
         )
     }
 }
+
+impl Shell {
+    /// Keeps the read-along transcript on the chapter that is playing.
+    pub(crate) fn ensure_read_along(&mut self, _cx: &mut Context<Self>) {
+        let Some(active) = &self.player else {
+            return;
+        };
+        let timeline = active.timeline();
+        // Without chapter data, read along in ten-minute stretches.
+        let (start, end) = if timeline.chapter.is_some() {
+            (timeline.start, timeline.end)
+        } else {
+            let start = (timeline.position / 600.).floor() * 600.;
+            (start, (start + 600.).min(timeline.duration.max(start + 1.)))
+        };
+        let start_ms = (start * 1000.) as u64;
+        let downloaded = self.read_along.as_ref().is_some_and(|read| {
+            read.downloading
+                && read
+                    .job
+                    .lock()
+                    .is_ok_and(|job| job.phase == transcript::Phase::Checking)
+        });
+        if !downloaded
+            && self
+                .read_along
+                .as_ref()
+                .is_some_and(|read| read.asin == active.asin && read.start_ms == start_ms)
+        {
+            return;
+        }
+        let Some(audio) = backend::downloaded_path(&active.account_key, &active.asin) else {
+            return;
+        };
+        let language = match &self.account {
+            Account::Ready(library) => library
+                .items
+                .iter()
+                .find(|item| item.asin == active.asin)
+                .and_then(|item| item.product.language.clone()),
+            _ => None,
+        };
+        let locale = transcript::locale_for(language.as_deref());
+        let span = |start: f64, end: f64| transcript::Span {
+            key: active.account_key.clone(),
+            asin: active.asin.to_string(),
+            audio: audio.clone(),
+            start,
+            end,
+            locale,
+        };
+        let next = active
+            .chapters
+            .iter()
+            .find(|chapter| chapter.start_offset_ms as f64 / 1000. >= end - 0.5)
+            .map(|chapter| {
+                let next_start = chapter.start_offset_ms as f64 / 1000.;
+                span(next_start, next_start + chapter.length_ms as f64 / 1000.)
+            });
+        self.read_along = Some(ReadAlong {
+            asin: active.asin.clone(),
+            start_ms,
+            locale,
+            job: transcript::start(span(start, end), next),
+            followed: None,
+            downloading: false,
+        });
+        self.read_along_scroll.set_offset(point(px(0.), px(0.)));
+    }
+
+    /// Downloads the speech model, then transcribes the chapter.
+    pub(crate) fn download_speech_model(&mut self, cx: &mut Context<Self>) {
+        if let Some(read) = &mut self.read_along {
+            transcript::install_model(read.locale, read.job.clone());
+            read.downloading = true;
+        }
+        cx.notify();
+    }
+
+    /// Scrolls the transcript so the spoken line sits in the upper third.
+    pub(crate) fn follow_read_along(&mut self) {
+        let Some(active) = &self.player else {
+            return;
+        };
+        let position = active.player.position();
+        let Some(read) = &mut self.read_along else {
+            return;
+        };
+        let Some(current) = read
+            .job
+            .lock()
+            .ok()
+            .and_then(|job| transcript::current_line(&job.lines, position))
+        else {
+            return;
+        };
+        if read.followed == Some(current) {
+            return;
+        }
+        let handle = &self.read_along_scroll;
+        let (Some(item), viewport) = (handle.bounds_for_item(current), handle.bounds()) else {
+            return;
+        };
+        let offset = handle.offset();
+        let target = offset.y - (item.origin.y - viewport.origin.y) + viewport.size.height * 0.3;
+        handle.set_offset(point(offset.x, target.min(px(0.))));
+        read.followed = Some(current);
+    }
+}

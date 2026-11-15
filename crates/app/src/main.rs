@@ -6,6 +6,7 @@ mod playback;
 mod player;
 mod region;
 mod shell;
+mod transcript;
 mod views;
 mod windows;
 
@@ -141,6 +142,18 @@ struct ActivePlayer {
     chapters_loading: bool,
 }
 
+/// The read-along transcript for the chapter on screen.
+struct ReadAlong {
+    asin: audible::Asin,
+    start_ms: u64,
+    locale: &'static str,
+    job: transcript::SharedJob,
+    /// The line the view last scrolled to, so it only moves on a new line.
+    followed: Option<usize>,
+    /// A model download is running; transcribe once it finishes.
+    downloading: bool,
+}
+
 struct Shell {
     page: Page,
     main_window: Option<gpui_kit::AnyWindowHandle>,
@@ -181,6 +194,9 @@ struct Shell {
     refreshing: bool,
     /// A catalog book sent to Audible to buy; refreshes look for it.
     pending_purchase: Option<audible::Asin>,
+    read_along_open: bool,
+    read_along: Option<ReadAlong>,
+    read_along_scroll: gpui_kit::ScrollHandle,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,
     covers_pending: std::collections::HashSet<audible::Asin>,
     palettes: std::collections::HashMap<audible::Asin, ui::theme::BookPalette>,

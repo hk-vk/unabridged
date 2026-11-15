@@ -95,6 +95,9 @@ impl Shell {
             library_fetched: None,
             refreshing: false,
             pending_purchase: None,
+            read_along_open: false,
+            read_along: None,
+            read_along_scroll: Default::default(),
             covers: Default::default(),
             covers_pending: Default::default(),
             palettes: Default::default(),
@@ -136,6 +139,11 @@ impl Shell {
                                 player.was_playing = false;
                             }
                             this.sync_position(cx);
+                            cx.notify();
+                        }
+                        if this.read_along_open && this.page == Page::NowPlaying {
+                            this.ensure_read_along(cx);
+                            this.follow_read_along();
                             cx.notify();
                         }
                         if this.player.as_ref().is_some_and(|p| p.player.is_playing()) {

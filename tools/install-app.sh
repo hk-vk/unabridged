@@ -39,6 +39,9 @@ cp "$root/assets/macos/Info.plist" "$app/Contents/Info.plist"
 cp "$root/assets/macos/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp "$root/target/debug/better-audible" "$binary.new"
 mv -f "$binary.new" "$binary"
+if [ -f "$root/target/debug/ba-transcribe" ]; then
+    cp "$root/target/debug/ba-transcribe" "$app/Contents/MacOS/ba-transcribe"
+fi
 
 if security find-certificate -c "$identity" >/dev/null 2>&1; then
     codesign --force --deep --sign "$identity" "$app"
