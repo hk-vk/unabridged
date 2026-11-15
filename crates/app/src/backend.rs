@@ -223,6 +223,25 @@ pub fn refresh() -> anyhow::Result<Option<Library>> {
     fetch_library(&rt, &client).map(Some)
 }
 
+/// Signs out of the current store: removes this Mac from the Amazon
+/// account's devices when online, then deletes the saved sign-in. Downloads
+/// stay on disk.
+pub fn sign_out() -> anyhow::Result<()> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let _guard = rt.enter();
+    let store = store()?;
+    let Some(client) = Audible::from_store(store.clone(), PROFILE)? else {
+        return Ok(());
+    };
+    if rt.block_on(client.sign_out(true)).is_err() {
+        // Offline or the token expired: still forget the sign-in here.
+        store.delete(PROFILE)?;
+    }
+    Ok(())
+}
+
 pub fn restore() -> anyhow::Result<Option<Library>> {
     if std::env::var_os("BETTER_AUDIBLE_SMOKE_TEST").is_some() {
         return Ok(None);

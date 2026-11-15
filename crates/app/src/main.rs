@@ -207,6 +207,8 @@ struct Shell {
     refreshing: bool,
     /// A catalog book sent to Audible to buy; refreshes look for it.
     pending_purchase: Option<audible::Asin>,
+    /// The Account card is asking to confirm a store change.
+    confirm_sign_out: bool,
     read_along_open: bool,
     /// The sleep timer choice behind `sleep`, for the menu's checkmark.
     sleep_choice: &'static str,

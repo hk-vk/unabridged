@@ -325,7 +325,6 @@ impl Shell {
             self.set_speed(next, cx);
         }
     }
-
 }
 
 impl ActivePlayer {

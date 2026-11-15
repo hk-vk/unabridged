@@ -178,22 +178,59 @@ impl Shell {
         } else {
             "Connected. Progress syncs with your other devices."
         };
-        let row = setting_row(
-            format!("Audible {}", library.marketplace),
-            status.to_string(),
-            Button::new("settings-refresh")
-                .label(if self.refreshing {
-                    "Refreshing…"
-                } else {
-                    "Refresh library"
-                })
-                .icon(Icon::Refresh)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.library_fetched = None;
-                    this.refresh_library(cx);
-                })),
-            &theme,
-        );
+        let marketplace = library.marketplace.clone();
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .when(!self.confirm_sign_out, |row| {
+                row.child(
+                    Button::new("settings-refresh")
+                        .label(if self.refreshing {
+                            "Refreshing…"
+                        } else {
+                            "Refresh library"
+                        })
+                        .icon(Icon::Refresh)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.library_fetched = None;
+                            this.refresh_library(cx);
+                        })),
+                )
+                .child(
+                    Button::new("settings-change-store")
+                        .label("Change store")
+                        .icon(Icon::Logout)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_sign_out = true;
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(self.confirm_sign_out, |row| {
+                row.child(
+                    Button::new("settings-cancel-sign-out")
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_sign_out = false;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("settings-confirm-sign-out")
+                        .label("Sign out")
+                        .variant(ButtonVariant::Primary)
+                        .on_click(cx.listener(|this, _, _, cx| this.change_store(cx))),
+                )
+            });
+        let caption = if self.confirm_sign_out {
+            format!(
+                "Sign out of Audible {marketplace} to choose another store? Downloads stay on this Mac."
+            )
+        } else {
+            status.to_string()
+        };
+        let row = setting_row(format!("Audible {marketplace}"), caption, actions, &theme);
         Some(settings_section(Icon::UserCircle, "Account", row, cx))
     }
 

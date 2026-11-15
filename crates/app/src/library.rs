@@ -102,6 +102,39 @@ impl Shell {
         .detach();
     }
 
+    /// Signs out so another Audible store can be chosen. Saves the playing
+    /// position first; downloads stay on this Mac.
+    pub(crate) fn change_store(&mut self, cx: &mut Context<Self>) {
+        self.confirm_sign_out = false;
+        if let Some(active) = &mut self.player {
+            active.player.pause();
+            active.was_playing = false;
+        }
+        self.sync_position(cx);
+        self.close_mini_player(cx);
+        self.player = None;
+        self.read_along = None;
+        self.read_along_open = false;
+        self.sleep = SleepTimer::Off;
+        self.pending_purchase = None;
+        self.explore_feed = None;
+        self.search_results.clear();
+        self.page = Page::Library;
+        self.account = Account::Loading;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { backend::sign_out() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.account = match result {
+                    Ok(()) => Account::SignedOut,
+                    Err(error) => Account::Error(format!("Could not sign out: {error}")),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn begin_sign_in(&mut self, cx: &mut Context<Self>) {
         let selected = self.marketplace.read(cx).selected_value().copied();
         let Some(marketplace) = Marketplace::ALL

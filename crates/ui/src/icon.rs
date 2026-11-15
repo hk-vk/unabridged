@@ -102,6 +102,8 @@ icons! {
     Pip => "pip",
     /// Show in Finder (`folder-open`).
     Folder => "folder",
+    /// Sign out (`logout-02`).
+    Logout => "logout",
     /// Slower, smaller (`minus-sign`).
     Minus => "minus",
     /// Faster, larger (`plus-sign`).
