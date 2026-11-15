@@ -607,6 +607,7 @@ dependencies = [
  "hex",
  "image",
  "model",
+ "raw-window-handle",
  "reqwest",
  "serde",
  "serde_json",

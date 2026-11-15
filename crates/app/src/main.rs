@@ -1012,7 +1012,10 @@ impl Shell {
                 });
                 return;
             }
-            let bounds = Bounds::new(point(px(160.), px(160.)), size(px(420.), px(160.)));
+            let bounds = Bounds::new(
+                point(px(160.), px(160.)),
+                size(px(mini_player::SIZE.0), px(mini_player::SIZE.1)),
+            );
             let view_shell = shell.clone();
             let result = cx.open_window(
                 WindowOptions {
@@ -1022,16 +1025,23 @@ impl Shell {
                         ..Default::default()
                     }),
                     kind: gpui_kit::WindowKind::Floating,
+                    window_background: gpui_kit::WindowBackgroundAppearance::Blurred,
                     show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
                     focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
                     is_resizable: false,
                     ..Default::default()
                 },
                 |window, cx| {
+                    mini_player::float_everywhere(window);
                     let mini = cx.new(|cx| mini_player::MiniPlayer::new(view_shell, cx));
                     cx.new(|cx| Root::new(mini, window, cx))
                 },
             );
+            // The panel may not be attached to its view until after creation;
+            // apply the native tweaks again now that it is (they are idempotent).
+            if let Ok(handle) = &result {
+                let _ = handle.update(cx, |_, window, _| mini_player::float_everywhere(window));
+            }
             shell.update(cx, |this, cx| {
                 this.mini_opening = false;
                 match result {
@@ -2483,6 +2493,21 @@ impl Render for Shell {
                 (duration - position).max(0.) as u64,
             ));
             let speed = active.player.rate();
+            let subtitle = current_chapter(&active.chapters, (position * 1000.) as u64)
+                .map(|(index, chapter)| {
+                    if chapter.title.is_empty() {
+                        format!("Chapter {}", index + 1)
+                    } else {
+                        chapter.title.clone()
+                    }
+                })
+                .unwrap_or_else(|| "Now playing".into());
+            let sleeping = !matches!(self.sleep, SleepTimer::Off);
+            let sleep_tip = if sleeping {
+                self.sleep.label(std::time::Instant::now())
+            } else {
+                "Sleep timer".into()
+            };
             let weak = cx.entity().downgrade();
             let scrubber = Scrubber::new("bar-seek", fraction, ScrubberColors::window(cx)).on_seek(
                 move |value, _, cx| {
@@ -2529,15 +2554,15 @@ impl Render for Shell {
                                 .child(
                                     div()
                                         .truncate()
-                                        .text_size(px(13.))
-                                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                        .type_style(ui::text::BODY_MEDIUM)
                                         .child(title),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(12.))
+                                        .truncate()
+                                        .type_style(ui::text::CAPTION)
                                         .text_color(theme.colors.ink_secondary)
-                                        .child("Open player"),
+                                        .child(subtitle),
                                 ),
                         ),
                 )
@@ -2553,7 +2578,7 @@ impl Render for Shell {
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(if compact_bar { 8. } else { 20. }))
+                                .gap(px(if compact_bar { 12. } else { 24. }))
                                 .child(
                                     IconButton::new("back-30", Icon::Back30, 22.)
                                         .hit_area(30.)
@@ -2592,31 +2617,60 @@ impl Render for Shell {
                                 .gap(px(8.))
                                 .child(
                                     div()
-                                        .text_size(px(10.))
+                                        .type_style(ui::text::FOOTNOTE.tabular())
                                         .text_color(theme.colors.ink_secondary)
                                         .child(elapsed),
                                 )
                                 .child(div().flex_1().child(scrubber))
                                 .child(
                                     div()
-                                        .text_size(px(10.))
+                                        .type_style(ui::text::FOOTNOTE.tabular())
                                         .text_color(theme.colors.ink_secondary)
                                         .child(remaining),
                                 ),
                         ),
                 )
                 .child(
-                    Chip::new("bar-speed")
-                        .label(model::format::speed(speed))
-                        .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            Chip::new("bar-speed")
+                                .label(model::format::speed(speed))
+                                .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
+                        )
+                        .child(
+                            IconButton::new("bar-sleep", Icon::Moon, 16.)
+                                .hit_area(28.)
+                                .color(if sleeping {
+                                    theme.accent.text
+                                } else {
+                                    theme.colors.ink_secondary
+                                })
+                                .hover_fill(theme.colors.fill)
+                                .tooltip(sleep_tip)
+                                .on_click(cx.listener(|this, _, _, cx| this.cycle_sleep(cx))),
+                        )
+                        .child(
+                            IconButton::new("bar-chapters", Icon::Chapters, 16.)
+                                .hit_area(28.)
+                                .hover_fill(theme.colors.fill)
+                                .tooltip("Chapters")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.chapters_open = true;
+                                    this.open_player(cx);
+                                })),
+                        )
+                        .children((!compact_bar).then(|| {
+                            IconButton::new("bar-mini", Icon::Pip, 16.)
+                                .hit_area(28.)
+                                .hover_fill(theme.colors.fill)
+                                .tooltip("Open mini player")
+                                .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx)))
+                        })),
                 )
-                .children((!compact_bar).then(|| {
-                    IconButton::new("bar-mini", Icon::Pip, 17.)
-                        .hit_area(28.)
-                        .hover_fill(theme.colors.fill)
-                        .tooltip("Open mini player")
-                        .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx)))
-                }))
                 .into_any_element()
         });
         let content = div().w_full().child(self.account_view(window, cx));

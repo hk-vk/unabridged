@@ -23,6 +23,7 @@ hex = "0.4"
 gpui-kit.workspace = true
 image.workspace = true
 model.workspace = true
+raw-window-handle = "0.6"
 ui.workspace = true
 
 [lints]
