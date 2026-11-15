@@ -13,6 +13,8 @@ use gpui_kit::{
         Root,
         input::{Input, InputEvent, InputState},
         select::{SearchableVec, Select, SelectEvent, SelectState},
+        shimmer::ShimmerText,
+        skeleton::Skeleton,
     },
     div, linear_color_stop, linear_gradient, point, px, relative, size,
 };
@@ -23,6 +25,58 @@ use ui::{
         SidebarHeader, SidebarItem, Toolbar,
     },
 };
+
+fn loading_placeholders(label: &'static str, cx: &Context<Shell>) -> gpui_kit::AnyElement {
+    let reduced_motion = cx.reduce_motion();
+    let fill = cx.theme().colors.fill;
+    let label_color = cx.theme().colors.ink_secondary;
+    let mut rows = div()
+        .flex()
+        .flex_col()
+        .gap(px(14.))
+        .w_full()
+        .max_w(px(620.))
+        .child(
+            div()
+                .text_size(px(14.))
+                .text_color(label_color)
+                .child(ShimmerText::new(label)),
+        );
+    for index in 0_usize..3 {
+        let block = |name: &'static str, width: f32, height: f32| -> gpui_kit::AnyElement {
+            if reduced_motion {
+                div()
+                    .w(px(width))
+                    .h(px(height))
+                    .rounded(px(7.))
+                    .bg(fill)
+                    .into_any_element()
+            } else {
+                div()
+                    .id(name)
+                    .child(Skeleton::new().w(px(width)).h(px(height)).rounded(px(7.)))
+                    .into_any_element()
+            }
+        };
+        rows = rows.child(
+            div()
+                .id(("loading-row", index))
+                .flex()
+                .items_center()
+                .gap(px(16.))
+                .child(block("cover", 60., 60.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .child(block("title", 180., 14.))
+                        .child(block("subtitle", 120., 11.)),
+                ),
+        );
+    }
+    rows.into_any_element()
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -1356,15 +1410,7 @@ impl Shell {
                             .variant(ButtonVariant::Glass(palette))
                             .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .px(px(12.))
-                            .text_size(px(12.))
-                            .text_color(palette.on_field_muted)
-                            .children(self.download_notice.iter().cloned()),
-                    )
+                    .child(div().flex_1().min_w_0())
                     .child(
                         Button::new("open-mini")
                             .label("Mini player")
@@ -1391,14 +1437,45 @@ impl Shell {
                                 this.chapters_open = !this.chapters_open;
                                 cx.notify();
                             })),
-                    )
-                    .children(downloading.map(|message| {
-                        div()
-                            .text_size(px(12.))
-                            .text_color(palette.on_field_muted)
-                            .child(message)
-                    })),
+                    ),
             )
+            .children(self.download_notice.as_ref().map(|message| {
+                div()
+                    .mx(px(if compact { 24. } else { 56. }))
+                    .mt(px(8.))
+                    .px(px(14.))
+                    .py(px(9.))
+                    .rounded(px(8.))
+                    .bg(palette.on_field_track)
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(12.))
+                            .text_color(palette.on_field)
+                            .child(message.clone()),
+                    )
+                    .child(
+                        Button::new("dismiss-player-status")
+                            .label("Dismiss")
+                            .variant(ButtonVariant::Glass(palette))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.download_notice = None;
+                                cx.notify();
+                            })),
+                    )
+            }))
+            .children(downloading.map(|message| {
+                div()
+                    .mx(px(if compact { 24. } else { 56. }))
+                    .mt(px(8.))
+                    .text_size(px(12.))
+                    .text_color(palette.on_field_muted)
+                    .child(message)
+            }))
             .child(
                 div()
                     .flex_1()
@@ -1407,7 +1484,7 @@ impl Shell {
                     .items_center()
                     .justify_center()
                     .gap(px(content_gap))
-                    .px(px(56.))
+                    .px(px(if compact { 24. } else { 56. }))
                     .child(
                         Cover::new(
                             image
@@ -1465,16 +1542,24 @@ impl Shell {
                     )
                     .children(chapter_panel),
             )
+            .children((!matches!(self.sleep, SleepTimer::Off)).then(|| {
+                div()
+                    .px(px(if compact { 24. } else { 56. }))
+                    .text_size(px(12.))
+                    .text_color(palette.on_field_muted)
+                    .child(self.sleep.label(std::time::Instant::now()))
+            }))
             .child(
                 div()
                     .h(px(120.))
                     .flex_none()
-                    .px(px(56.))
+                    .px(px(if compact { 24. } else { 56. }))
                     .flex()
                     .items_center()
                     .child(
                         div()
-                            .flex_1()
+                            .w(px(if compact { 190. } else { 220. }))
+                            .flex_none()
                             .flex()
                             .items_center()
                             .gap(px(8.))
@@ -1485,25 +1570,24 @@ impl Shell {
                                     .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
                             )
                             .child(
-                                div().w(px(165.)).child(
+                                div().w(px(if compact { 120. } else { 145. })).child(
                                     Select::new(&self.sleep_select)
-                                        .placeholder("Sleep timer")
+                                        .placeholder("Timer")
                                         .accessibility_label("Sleep timer")
+                                        .appearance(false)
+                                        .bg(palette.on_field_track)
+                                        .rounded(px(8.))
                                         .menu_width(px(180.)),
                                 ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(palette.on_field_muted)
-                                    .child(self.sleep.label(std::time::Instant::now())),
                             ),
                     )
                     .child(
                         div()
+                            .flex_1()
                             .flex()
                             .items_center()
-                            .gap(px(30.))
+                            .justify_center()
+                            .gap(px(if compact { 16. } else { 30. }))
                             .child(
                                 Button::new("full-back30")
                                     .icon(Icon::Back30)
@@ -1539,7 +1623,8 @@ impl Shell {
                     )
                     .child(
                         div()
-                            .flex_1()
+                            .w(px(if compact { 160. } else { 220. }))
+                            .flex_none()
                             .flex()
                             .items_center()
                             .justify_end()
@@ -1550,7 +1635,11 @@ impl Shell {
                                     .text_color(palette.on_field_muted)
                                     .child("Volume"),
                             )
-                            .child(div().w(px(100.)).child(volume_control)),
+                            .child(
+                                div()
+                                    .w(px(if compact { 76. } else { 100. }))
+                                    .child(volume_control),
+                            ),
                     ),
             );
         // The player rises into place; reduced motion shows it immediately.
@@ -1575,7 +1664,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> SidebarItem {
         SidebarItem::new(label, icon, label)
-            .selected(self.page == page)
+            .selected(self.page == page || (page == Page::Explore && self.page == Page::Search))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.page = page;
                 if page == Page::Bookmarks {
@@ -1704,7 +1793,7 @@ impl Shell {
         let base = || div().flex().flex_col().gap(px(18.)).max_w(px(620.));
         match &self.account {
             Account::Loading => base().child(heading("Connecting to Audible"))
-                .child(copy("Loading your account and library…".into())).into_any_element(),
+                .child(loading_placeholders("Loading your library…", cx)).into_any_element(),
             Account::SignedOut => base().child(heading("Your Audible library, here"))
                 .child(copy("Choose your Audible marketplace, then sign in with Amazon. Your device credentials are stored in your Mac’s Keychain.".into()))
                 .child(div().flex().gap(px(12.))
@@ -1728,7 +1817,7 @@ impl Shell {
                 .into_any_element(),
             Account::Ready(library) => {
                 if self.page == Page::Bookmarks {
-                    if self.bookmarks_loading { return base().child(copy("Loading bookmarks…".into())).into_any_element(); }
+                    if self.bookmarks_loading { return loading_placeholders("Loading bookmarks…", cx); }
                     if self.bookmarks.is_empty() { return base().child(heading("No bookmarks yet")).child(copy("Save a moment from the player and find it here. Bookmarks are stored on this Mac.".into())).into_any_element(); }
                     return div().flex().flex_col().gap(px(12.))
                         .child(div().text_size(px(13.)).text_color(color).child("Saved on this Mac"))
@@ -1782,7 +1871,7 @@ impl Shell {
                                 .child(div().font_family("Literata").text_size(px(36.)).child(title))
                                 .child(div().text_size(px(14.)).text_color(color).child(author))
                                 .children(book_progress(item).map(|percent| div().font_family("Literata").text_size(px(17.)).child(format!("{percent:.0}% complete"))))
-                                .child(action)));
+                                .child(div().flex().child(action))));
                         view = view.child(self.shelf("Still listening", "listening", &listening.iter().take(6).copied().collect::<Vec<_>>(), Page::Progress, cx));
                     }
                     view = view.child(self.shelf("Recently added", "recent", &recent, Page::AllBooks, cx));
@@ -1796,8 +1885,8 @@ impl Shell {
                     let cover = self.covers.get(&item.asin).cloned();
                     let url = Marketplace::ALL.iter().find(|market| market.display_name() == library.marketplace).map(|market| format!("https://www.audible.{}/pd/{}", market.domain(), item.asin));
                     return div().flex().flex_col().gap(px(28.))
-                        .child(Button::new("catalog-book-back").label("Back to Explore").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| this.back(cx))))
-                        .child(div().flex().items_start().gap(px(32.))
+                        .child(div().flex().child(Button::new("catalog-book-back").label("Back to Explore").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| this.back(cx)))))
+                        .child(div().flex().flex_wrap().items_start().gap(px(32.))
                             .child(Cover::new(cover.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(220.), 7.))
                             .child(div().flex().flex_col().gap(px(12.)).max_w(px(600.))
                                 .child(div().font_family("Literata").text_size(px(34.)).child(title))
@@ -1834,24 +1923,25 @@ impl Shell {
                         Button::new("book-download").label("Download to this Mac").icon(Icon::Download).variant(ButtonVariant::Primary).on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), book_title.clone(), cx))).into_any_element()
                     };
                     return div().flex().flex_col().gap(px(28.))
-                        .child(Button::new("book-back").label("Back").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| this.back(cx))))
-                        .child(div().flex().items_start().gap(px(32.))
+                        .child(div().flex().child(Button::new("book-back").label("Back").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| this.back(cx)))))
+                        .child(div().flex().flex_wrap().items_start().gap(px(32.))
                             .child(Cover::new(cover.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(220.), 7.))
                             .child(div().flex().flex_col().gap(px(12.)).max_w(px(600.))
                                 .child(div().font_family("Literata").text_size(px(34.)).child(title))
                                 .child(div().text_size(px(14.)).text_color(color).child(author))
                                 .children((!narrator.is_empty()).then(|| div().text_size(px(13.)).text_color(color).child(format!("Read by {narrator}"))))
                                 .children(item.runtime_length_min.map(|mins| div().text_size(px(13.)).text_color(color).child(format!("{} hr {} min", mins / 60, mins % 60))))
-                                .child(action)))
+                                .child(div().flex().child(action))))
                         .into_any_element();
                 }
                 if self.page == Page::Explore {
                     let mut view = div().flex().flex_col().gap(px(24.))
                         .child(heading("Explore Audible"))
-                        .child(div().flex().gap(px(12.)).child(div().w(px(400.)).child(Input::new(&self.search)))
+                        .child(div().flex().child(Button::new("search-library-from-explore").label("Search my library").icon(Icon::Search).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Search; cx.notify(); }))))
+                        .child(div().flex().gap(px(12.)).child(div().flex_1().min_w_0().max_w(px(400.)).child(Input::new(&self.search)))
                             .child(Button::new("search-catalog").label("Search").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.search_catalog(cx)))));
                     if self.showing_search {
-                        view = view.child(Button::new("explore-home").label("Back to Explore").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.showing_search = false; this.search_message = None; cx.notify(); })))
+                        view = view.child(div().flex().child(Button::new("explore-home").label("Back to Explore").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.showing_search = false; this.search_message = None; cx.notify(); }))))
                             .children(self.search_message.iter().map(|message| div().text_size(px(13.)).text_color(color).child(message.clone())))
                             .children(self.search_results.iter().map(|item| {
                                 let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
@@ -1884,11 +1974,11 @@ impl Shell {
                                 .child(div().flex().flex_wrap().gap(px(10.)).children(feed.genres.iter().take(6).enumerate().map(|(index, genre)| {
                                     let id = genre.id.clone(); let name = genre.name.clone(); let search_name = name.clone();
                                     let accent = ui::theme::Accent::resolve(ui::theme::AccentTheme::ALL[index % ui::theme::AccentTheme::ALL.len()], cx.theme().appearance, cx.theme().colors.window);
-                                    div().id(("genre", index)).cursor_pointer().w(px(145.)).h(px(58.)).px(px(14.)).flex().items_center().rounded(px(10.))
+                                    div().id(("genre", index)).cursor_pointer().w(px(170.)).min_h(px(58.)).px(px(14.)).py(px(10.)).flex().items_center().rounded(px(10.))
                                         .bg(accent.tint).text_color(accent.on_tint).text_size(px(14.)).font_weight(gpui_kit::FontWeight::MEDIUM)
                                         .hover(|style| style.opacity(0.84)).active(|style| style.opacity(0.72))
                                         .on_click(cx.listener(move |this, _, _, cx| this.browse_genre(id.clone(), search_name.clone(), cx)))
-                                        .child(name)
+                                        .child(div().w_full().min_w_0().overflow_hidden().child(name))
                                 }))));
                         }
                         if !feed.new_releases.is_empty() {
@@ -1907,8 +1997,12 @@ impl Shell {
                         }
                         if feed.warning.is_some() { view = view.child(Button::new("retry-explore").label("Try again").on_click(cx.listener(|this, _, _, cx| { this.explore_feed = None; this.load_explore(cx); cx.notify(); }))); }
                     } else {
-                        view = view.child(div().text_size(px(13.)).text_color(color).child(if self.explore_loading { "Loading Explore…" } else { "Explore is unavailable right now." }))
-                            .children((!self.explore_loading).then(|| Button::new("load-explore").label("Try again").on_click(cx.listener(|this, _, _, cx| this.load_explore(cx)))));
+                        if self.explore_loading {
+                            view = view.child(loading_placeholders("Loading Explore…", cx));
+                        } else {
+                            view = view.child(div().text_size(px(13.)).text_color(color).child("Explore is unavailable right now."))
+                                .child(div().flex().child(Button::new("load-explore").label("Try again").on_click(cx.listener(|this, _, _, cx| this.load_explore(cx)))));
+                        }
                     }
                     return view.into_any_element();
                 }
@@ -1937,7 +2031,7 @@ impl Shell {
                 }
                 let query = self.library_search.read(cx).value().trim().to_lowercase();
                 if self.page == Page::Search && query.is_empty() {
-                    return base().child(Input::new(&self.library_search)).child(copy("Search the books in your library.".into())).into_any_element();
+                    return base().child(div().flex().child(Button::new("search-to-explore").label("Explore Audible").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Explore; this.load_explore(cx); cx.notify(); })))).child(Input::new(&self.library_search)).child(copy("Search the books in your library.".into())).into_any_element();
                 }
                 let items: Vec<_> = library.items.iter().filter(|item| match self.page {
                     Page::Progress => book_progress(item).unwrap_or(0.) > 0. && !book_finished(item),
@@ -1950,11 +2044,13 @@ impl Shell {
                 }).collect();
                 if items.is_empty() {
                     return base()
+                        .children((self.page == Page::Search).then(|| div().flex().child(Button::new("empty-search-to-explore").label("Explore Audible").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Explore; this.load_explore(cx); cx.notify(); })))))
                         .children((self.page == Page::Search).then(|| Input::new(&self.library_search)))
                         .child(heading(match self.page { Page::Progress => "Nothing in progress", Page::OnThisMac => "No downloads yet", Page::Search => "No matching books", Page::Finished => "No finished books", _ => "Your library is empty" }))
                         .child(copy(if self.page == Page::OnThisMac { "Download a title from your library to listen on this Mac.".into() } else if self.page == Page::Search { "Try a different title, author or narrator.".into() } else if library.offline { "Showing the library saved on this Mac.".into() } else { "Your Audible library has synced.".into() })).into_any_element();
                 }
                 div().flex().flex_col().gap(px(16.))
+                    .children((self.page == Page::Search).then(|| div().flex().child(Button::new("results-search-to-explore").label("Explore Audible").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Explore; this.load_explore(cx); cx.notify(); })))))
                     .children((self.page == Page::Search).then(|| div().max_w(px(500.)).child(Input::new(&self.library_search))))
                     .children(matches!(self.page, Page::AuthorBooks | Page::SeriesBooks).then(|| {
                         let target = if self.page == Page::AuthorBooks { Page::Authors } else { Page::Series };
@@ -2138,6 +2234,7 @@ impl Render for Shell {
         });
         let bar =
             self.player.as_ref().map(|active| {
+                let compact_bar = f32::from(window.viewport_size().width) < 1050.;
                 let title = active.title.clone();
                 let image = self.covers.get(&active.asin).cloned();
                 let playing = active.player.is_playing();
@@ -2165,7 +2262,7 @@ impl Render for Shell {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(16.))
+                    .gap(px(if compact_bar { 8. } else { 16. }))
                     .px(px(14.))
                     .rounded(px(18.))
                     .elevation(Elevation::FloatingPlayer, &theme, window)
@@ -2174,7 +2271,7 @@ impl Render for Shell {
                             .id("open-now-playing")
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, _, cx| this.open_player(cx)))
-                            .w(px(260.))
+                            .w(px(if compact_bar { 165. } else { 260. }))
                             .min_w_0()
                             .flex()
                             .items_center()
@@ -2222,7 +2319,7 @@ impl Render for Shell {
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(20.))
+                                    .gap(px(if compact_bar { 8. } else { 20. }))
                                     .child(Button::new("back-30").icon(Icon::Back30).on_click(
                                         cx.listener(|this, _, _, cx| this.skip(-30., cx)),
                                     ))
@@ -2271,11 +2368,11 @@ impl Render for Shell {
                             .label(format!("{speed}×"))
                             .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
                     )
-                    .child(
+                    .children((!compact_bar).then(|| {
                         Button::new("bar-mini")
                             .label("Mini player")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
-                    )
+                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx)))
+                    }))
                     .into_any_element()
             });
         let content = div().w_full().child(self.account_view(window, cx));
@@ -2310,7 +2407,6 @@ impl Render for Shell {
                     .border_r_1()
                     .border_color(theme.colors.hairline)
                     .bg(theme.colors.sidebar)
-                    .child(self.nav("Search", Icon::Search, Page::Search, cx))
                     .child(self.nav("Explore", Icon::Compass, Page::Explore, cx))
                     .child(div().h(px(24.)))
                     .child(SidebarHeader::new("Your library"))

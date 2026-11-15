@@ -142,27 +142,32 @@ impl Elevation {
 
         match self {
             Elevation::CoverThumb => cover(vec![drop(1.0, 3.0, black, 0.25)]),
-            Elevation::CoverShelf => {
-                cover(vec![drop(1.0, 2.0, ink, 0.1), drop(6.0, 16.0, ink, 0.12)])
-            }
-            Elevation::Cover => cover(vec![drop(1.0, 2.0, ink, 0.12), drop(8.0, 20.0, ink, 0.16)]),
-            Elevation::CoverHero => {
-                cover(vec![drop(1.0, 2.0, ink, 0.12), drop(12.0, 32.0, ink, 0.18)])
-            }
+            Elevation::CoverShelf => cover(vec![
+                drop(1.0, 3.0, black, 0.12),
+                drop(3.0, 8.0, black, 0.10),
+            ]),
+            Elevation::Cover => cover(vec![
+                drop(1.0, 3.0, black, 0.12),
+                drop(4.0, 10.0, black, 0.12),
+            ]),
+            Elevation::CoverHero => cover(vec![
+                drop(1.0, 3.0, black, 0.12),
+                drop(5.0, 12.0, black, 0.14),
+            ]),
             Elevation::CoverOnField => cover(vec![
                 drop(2.0, 4.0, black, 0.3),
-                drop(16.0, 36.0, black, 0.4),
+                drop(6.0, 14.0, black, 0.24),
             ]),
             Elevation::CoverStage => cover(vec![
                 drop(2.0, 4.0, black, 0.25),
-                drop(30.0, 70.0, black, 0.45),
+                drop(8.0, 18.0, black, 0.24),
             ]),
             Elevation::ButtonPrimary => Surface {
                 fill: vertical(a.top, a.fill),
                 ring: Some(with_alpha(a.deep, 0.9)),
                 highlight: Some(lit(0.4, 0.3)),
                 shade: Some(with_alpha(mix(a.deep, black, 0.25), 0.25)),
-                drops: vec![drop(1.0, 2.0, a.deep, 0.35), drop(6.0, 14.0, a.fill, 0.32)],
+                drops: vec![drop(1.0, 3.0, black, 0.16)],
                 ..none
             },
             Elevation::ButtonSecondary | Elevation::Chip => Surface {
@@ -183,7 +188,7 @@ impl Elevation {
                 fill: vertical(c.ink_top, c.ink),
                 ring: Some(with_alpha(c.ink, 0.9)),
                 highlight: Some(lit(0.22, 0.6)),
-                drops: vec![drop(2.0, 4.0, ink, 0.25), drop(6.0, 14.0, ink, 0.28)],
+                drops: vec![drop(2.0, 5.0, black, 0.18)],
                 ..none
             },
             Elevation::ButtonLight(book) | Elevation::ButtonLightLarge(book) => Surface {
@@ -191,7 +196,7 @@ impl Elevation {
                 ring: Some(with_alpha(black, 0.35)),
                 highlight: Some(white),
                 drops: if matches!(self, Elevation::ButtonLightLarge(_)) {
-                    vec![drop(2.0, 4.0, black, 0.25), drop(12.0, 28.0, black, 0.38)]
+                    vec![drop(2.0, 5.0, black, 0.2), drop(4.0, 10.0, black, 0.14)]
                 } else {
                     vec![drop(2.0, 4.0, black, 0.25), drop(6.0, 14.0, black, 0.3)]
                 },
@@ -254,11 +259,7 @@ impl Elevation {
                     if dark { 0.6 } else { 0.12 },
                 )),
                 inner_stroke: Some(lit(0.85, 0.08)),
-                drops: vec![
-                    drop(1.0, 2.0, ink, 0.06),
-                    drop(8.0, 20.0, ink, 0.12),
-                    drop(24.0, 48.0, ink, 0.14),
-                ],
+                drops: vec![drop(1.0, 2.0, ink, 0.06), drop(4.0, 12.0, black, 0.12)],
                 ..none
             },
             Elevation::Banner(book) => Surface {

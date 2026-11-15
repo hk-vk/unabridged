@@ -194,7 +194,17 @@ impl Theme {
     /// Installs a theme for `settings` using the current system appearance.
     pub fn init(settings: ThemeSettings, cx: &mut App) {
         let theme = Self::resolve(settings, cx.window_appearance());
+        Self::sync_component_theme(theme.appearance, cx);
         cx.set_global(theme);
+    }
+
+    fn sync_component_theme(appearance: Appearance, cx: &mut App) {
+        use gpui_kit::component::theme::{Theme as ComponentTheme, ThemeMode};
+        let mode = match appearance {
+            Appearance::Light => ThemeMode::Light,
+            Appearance::Dark => ThemeMode::Dark,
+        };
+        ComponentTheme::change(mode, None, cx);
     }
 
     /// Replaces the preferences and re-resolves the theme, refreshing windows.
@@ -208,6 +218,7 @@ impl Theme {
         let settings = cx.theme().settings;
         let theme = Self::resolve(settings, system);
         if &theme != cx.theme() {
+            Self::sync_component_theme(theme.appearance, cx);
             cx.set_global(theme);
             cx.refresh_windows();
         }
