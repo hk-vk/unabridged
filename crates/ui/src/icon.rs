@@ -110,6 +110,10 @@ icons! {
     External => "external",
     /// Disclosure (`arrow-right-01`).
     ChevronRight => "chevron-right",
+    /// Previous chapter (`previous`).
+    Previous => "previous",
+    /// Next chapter (`next`).
+    Next => "next",
 }
 
 /// An SVG element drawing `icon`. Give it a size and a `text_color`.

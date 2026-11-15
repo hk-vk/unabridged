@@ -285,6 +285,8 @@ struct Shell {
     page: Page,
     main_window: Option<gpui_kit::AnyWindowHandle>,
     mini_window: Option<gpui_kit::AnyWindowHandle>,
+    /// The mini player shows time left in the book instead of the chapter.
+    mini_book_time: bool,
     mini_opening: bool,
     main_opening: bool,
     previous_page: Page,
@@ -373,6 +375,7 @@ impl Shell {
             page: Page::Library,
             main_window: Some(window.window_handle()),
             mini_window: None,
+            mini_book_time: false,
             mini_opening: false,
             main_opening: false,
             previous_page: Page::Library,
@@ -986,6 +989,39 @@ impl Shell {
             }
             cx.notify();
         }
+    }
+
+    /// Moves to the next chapter (`forward`), or back to the start of this
+    /// chapter, or to the previous one when already near its start.
+    fn step_chapter(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some(active) = &self.player else { return };
+        let duration = active.player.duration();
+        let position_ms = (active.player.position().max(0.) * 1000.) as u64;
+        let Some((index, chapter)) = current_chapter(&active.chapters, position_ms) else {
+            return;
+        };
+        let target = if forward {
+            active.chapters.get(index + 1)
+        } else if position_ms.saturating_sub(chapter.start_offset_ms) > 3_000 || index == 0 {
+            Some(chapter)
+        } else {
+            active.chapters.get(index - 1)
+        };
+        if let Some(target) = target
+            && duration > 0.
+        {
+            let fraction = (target.start_offset_ms as f64 / 1000. / duration) as f32;
+            self.seek_fraction(fraction, cx);
+        }
+    }
+
+    fn close_mini_player(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.mini_window.take() {
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            });
+        }
+        cx.notify();
     }
 
     fn skip(&mut self, seconds: f64, cx: &mut Context<Self>) {
