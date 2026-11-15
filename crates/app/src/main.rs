@@ -9,7 +9,7 @@ use gpui_kit::{
     component::{
         Root,
         input::{Input, InputEvent, InputState},
-        select::{SearchableVec, Select, SelectState},
+        select::{SearchableVec, Select, SelectEvent, SelectState},
     },
     div, linear_color_stop, linear_gradient, point, px, relative, size,
 };
@@ -121,6 +121,43 @@ fn current_chapter(
     })
 }
 
+#[derive(Clone)]
+enum SleepTimer {
+    Off,
+    Deadline(std::time::Instant),
+    EndOfChapter {
+        asin: audible::Asin,
+        end_seconds: f64,
+    },
+}
+
+impl SleepTimer {
+    fn due(&self, now: std::time::Instant, current: Option<(&audible::Asin, f64)>) -> bool {
+        match self {
+            Self::Off => false,
+            Self::Deadline(deadline) => now >= *deadline,
+            Self::EndOfChapter { asin, end_seconds } => {
+                current.is_some_and(|(current_asin, position)| {
+                    current_asin == asin && position >= *end_seconds
+                })
+            }
+        }
+    }
+    fn label(&self, now: std::time::Instant) -> String {
+        match self {
+            Self::Off => "Sleep timer off".into(),
+            Self::Deadline(deadline) => format!(
+                "Stop in {} min",
+                deadline
+                    .saturating_duration_since(now)
+                    .as_secs()
+                    .div_ceil(60)
+            ),
+            Self::EndOfChapter { .. } => "Stop after this chapter".into(),
+        }
+    }
+}
+
 struct ActivePlayer {
     asin: audible::Asin,
     account_key: String,
@@ -141,6 +178,8 @@ struct Shell {
     chapters_open: bool,
     bookmarks: Vec<(audible::Asin, u64)>,
     bookmarks_loading: bool,
+    sleep: SleepTimer,
+    sleep_select: Entity<SelectState<SearchableVec<&'static str>>>,
     account: Account,
     marketplace: Entity<SelectState<SearchableVec<&'static str>>>,
     redirect: Entity<InputState>,
@@ -169,6 +208,14 @@ impl Shell {
         let library_search = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search titles, authors or narrators")
         });
+        let sleep_options = SearchableVec::new(vec![
+            "Off",
+            "15 minutes",
+            "30 minutes",
+            "1 hour",
+            "End of chapter",
+        ]);
+        let sleep_select = cx.new(|cx| SelectState::new(sleep_options, None, window, cx));
         let subscriptions = vec![
             cx.subscribe(
                 &library_search,
@@ -183,6 +230,20 @@ impl Shell {
                     this.search_catalog(cx);
                 }
             }),
+            cx.subscribe_in(
+                &sleep_select,
+                window,
+                |this: &mut Self,
+                 select,
+                 event: &SelectEvent<SearchableVec<&'static str>>,
+                 window,
+                 cx| {
+                    if let SelectEvent::Confirm(Some(choice)) = event {
+                        this.set_sleep(choice, cx);
+                        select.update(cx, |select, cx| select.set_selected_index(None, window, cx));
+                    }
+                },
+            ),
         ];
         let marketplaces = SearchableVec::new(
             Marketplace::ALL
@@ -201,6 +262,8 @@ impl Shell {
             chapters_open: false,
             bookmarks: Vec::new(),
             bookmarks_loading: false,
+            sleep: SleepTimer::Off,
+            sleep_select,
             account: Account::Loading,
             marketplace,
             redirect,
@@ -228,6 +291,22 @@ impl Shell {
                 if this
                     .update(cx, |this, cx| {
                         if this.download.is_some() {
+                            cx.notify();
+                        }
+                        let due = this.sleep.due(
+                            std::time::Instant::now(),
+                            this.player
+                                .as_ref()
+                                .map(|active| (&active.asin, active.player.position())),
+                        );
+                        if due {
+                            if let Some(active) = &mut this.player {
+                                active.player.pause();
+                                active.was_playing = false;
+                            }
+                            this.sleep = SleepTimer::Off;
+                            this.sync_position(cx);
+                            this.download_notice = Some("Sleep timer stopped playback.".into());
                             cx.notify();
                         }
                         let ended = this
@@ -649,6 +728,8 @@ impl Shell {
                     Ok(player)
                 }) {
                     Ok(player) => {
+                        let cancelled_timer = matches!(&this.sleep, SleepTimer::EndOfChapter { asin: timer_asin, .. } if timer_asin != &asin);
+                        if cancelled_timer { this.sleep = SleepTimer::Off; }
                         this.player = Some(ActivePlayer {
                             asin,
                             account_key: key,
@@ -660,7 +741,7 @@ impl Shell {
                         });
                         this.chapters_open = false;
                         this.load_chapters(cx);
-                        this.download_notice = None;
+                        this.download_notice = cancelled_timer.then(|| "Chapter sleep timer turned off when you changed books.".into());
                         this.open_player(cx);
                     }
                     Err(error) => {
@@ -769,6 +850,50 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    fn set_sleep(&mut self, choice: &str, cx: &mut Context<Self>) {
+        let now = std::time::Instant::now();
+        self.sleep = match choice {
+            "15 minutes" => SleepTimer::Deadline(now + std::time::Duration::from_secs(15 * 60)),
+            "30 minutes" => SleepTimer::Deadline(now + std::time::Duration::from_secs(30 * 60)),
+            "1 hour" => SleepTimer::Deadline(now + std::time::Duration::from_secs(60 * 60)),
+            "End of chapter" => {
+                let chapter = self.player.as_ref().and_then(|active| {
+                    current_chapter(
+                        &active.chapters,
+                        (active.player.position().max(0.) * 1000.) as u64,
+                    )
+                    .map(|(_, chapter)| {
+                        (
+                            active.asin.clone(),
+                            chapter.start_offset_ms.saturating_add(chapter.length_ms),
+                        )
+                    })
+                });
+                if let Some((asin, end_ms)) = chapter {
+                    SleepTimer::EndOfChapter {
+                        asin,
+                        end_seconds: end_ms as f64 / 1000.,
+                    }
+                } else {
+                    self.download_notice = Some(
+                        "Chapter timing is unavailable. Choose a timed sleep option instead."
+                            .into(),
+                    );
+                    SleepTimer::Off
+                }
+            }
+            _ => SleepTimer::Off,
+        };
+        cx.notify();
+    }
+
+    fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
+        if let Some(active) = &self.player {
+            active.player.set_volume(volume);
+            cx.notify();
+        }
     }
 
     fn cycle_speed(&mut self, cx: &mut Context<Self>) {
@@ -926,6 +1051,15 @@ impl Shell {
         } else {
             None
         };
+        let volume_weak = cx.entity().downgrade();
+        let volume_control = Scrubber::new(
+            "full-volume",
+            active.player.volume(),
+            ScrubberColors::field(&palette, false),
+        )
+        .on_seek(move |volume, _, cx| {
+            let _ = volume_weak.update(cx, |this, cx| this.set_volume(volume, cx));
+        });
         let downloading = self.download.as_ref().map(|download| {
             let event = download
                 .event
@@ -1072,12 +1206,31 @@ impl Shell {
                     .flex()
                     .items_center()
                     .child(
-                        div().flex_1().child(
-                            Button::new("full-speed")
-                                .label(format!("{speed}×"))
-                                .variant(ButtonVariant::Glass(palette))
-                                .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
-                        ),
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                Button::new("full-speed")
+                                    .label(format!("{speed}×"))
+                                    .variant(ButtonVariant::Glass(palette))
+                                    .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
+                            )
+                            .child(
+                                div().w(px(165.)).child(
+                                    Select::new(&self.sleep_select)
+                                        .placeholder("Sleep timer")
+                                        .accessibility_label("Sleep timer")
+                                        .menu_width(px(180.)),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.on_field_muted)
+                                    .child(self.sleep.label(std::time::Instant::now())),
+                            ),
                     )
                     .child(
                         div()
@@ -1117,7 +1270,21 @@ impl Shell {
                                     .on_click(cx.listener(|this, _, _, cx| this.skip(30., cx))),
                             ),
                     )
-                    .child(div().flex_1()),
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.on_field_muted)
+                                    .child("Volume"),
+                            )
+                            .child(div().w(px(100.)).child(volume_control)),
+                    ),
             );
         // Opacity-only transition keeps spatial motion out of reduced-motion mode.
         if cx.reduce_motion() {
@@ -1461,7 +1628,7 @@ impl Shell {
                     return base()
                         .children((self.page == Page::Search).then(|| Input::new(&self.library_search)))
                         .child(heading(match self.page { Page::Progress => "Nothing in progress", Page::OnThisMac => "No downloads yet", Page::Search => "No matching books", Page::Finished => "No finished books", _ => "Your library is empty" }))
-                        .child(copy(if self.page == Page::OnThisMac { "Download a title from your library to listen on this Mac.".into() } else if self.page == Page::Search { "Try a different title, author or narrator.".into() } else { "Your Audible library has synced.".into() })).into_any_element();
+                        .child(copy(if self.page == Page::OnThisMac { "Download a title from your library to listen on this Mac.".into() } else if self.page == Page::Search { "Try a different title, author or narrator.".into() } else if library.offline { "Showing the library saved on this Mac.".into() } else { "Your Audible library has synced.".into() })).into_any_element();
                 }
                 div().flex().flex_col().gap(px(16.))
                     .children((self.page == Page::Search).then(|| div().max_w(px(500.)).child(Input::new(&self.library_search))))
@@ -1903,6 +2070,24 @@ fn main() {
 mod download_tests {
     use super::*;
     use audible::{DownloadEvent, download::Progress};
+
+    #[test]
+    fn sleep_timer_only_stops_at_its_deadline_or_matching_chapter_end() {
+        let now = std::time::Instant::now();
+        let timed = SleepTimer::Deadline(now + std::time::Duration::from_secs(30));
+        assert!(!timed.due(now, None));
+        assert!(timed.due(now + std::time::Duration::from_secs(30), None));
+        let book = audible::Asin::new("BOOK1").unwrap();
+        let other = audible::Asin::new("BOOK2").unwrap();
+        let chapter = SleepTimer::EndOfChapter {
+            asin: book.clone(),
+            end_seconds: 120.,
+        };
+        assert!(!chapter.due(now, Some((&book, 119.9))));
+        assert!(chapter.due(now, Some((&book, 120.))));
+        assert!(!chapter.due(now, Some((&other, 120.))));
+        assert!(!SleepTimer::Off.due(now, None));
+    }
 
     #[test]
     fn chapter_lookup_respects_boundaries_and_missing_metadata() {

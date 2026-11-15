@@ -24,3 +24,6 @@ bool ba_player_is_playing(void *handle) { return handle && [(__bridge AVAudioPla
 
 float ba_player_rate(void *handle) { return handle ? [(__bridge AVAudioPlayer *)handle rate] : 1.0; }
 void ba_player_set_rate(void *handle, float rate) { if (handle) [(__bridge AVAudioPlayer *)handle setRate:rate]; }
+
+float ba_player_volume(void *handle) { return handle ? [(__bridge AVAudioPlayer *)handle volume] : 0.0; }
+void ba_player_set_volume(void *handle, float volume) { if (handle) [(__bridge AVAudioPlayer *)handle setVolume:volume]; }

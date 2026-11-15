@@ -19,6 +19,8 @@ mod platform {
         fn ba_player_is_playing(player: *mut c_void) -> bool;
         fn ba_player_rate(player: *mut c_void) -> f32;
         fn ba_player_set_rate(player: *mut c_void, rate: f32);
+        fn ba_player_volume(player: *mut c_void) -> f32;
+        fn ba_player_set_volume(player: *mut c_void, volume: f32);
     }
     pub struct Player(NonNull<c_void>);
     impl Player {
@@ -58,6 +60,12 @@ mod platform {
         pub fn set_rate(&self, rate: f32) {
             unsafe { ba_player_set_rate(self.0.as_ptr(), rate.clamp(0.5, 2.0)) }
         }
+        pub fn volume(&self) -> f32 {
+            unsafe { ba_player_volume(self.0.as_ptr()) }
+        }
+        pub fn set_volume(&self, volume: f32) {
+            unsafe { ba_player_set_volume(self.0.as_ptr(), volume.clamp(0.0, 1.0)) }
+        }
     }
     impl Drop for Player {
         fn drop(&mut self) {
@@ -93,6 +101,10 @@ impl Player {
         1.0
     }
     pub fn set_rate(&self, _rate: f32) {}
+    pub fn volume(&self) -> f32 {
+        0.
+    }
+    pub fn set_volume(&self, _volume: f32) {}
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -163,6 +175,8 @@ mod tests {
         assert!((player.position() - 0.5).abs() < 0.05);
         player.set_rate(1.25);
         assert!((player.rate() - 1.25).abs() < 0.01);
+        player.set_volume(0.4);
+        assert!((player.volume() - 0.4).abs() < 0.01);
         drop(player);
         std::fs::remove_file(path).unwrap();
     }
