@@ -210,6 +210,19 @@ fn fetch_library(rt: &tokio::runtime::Runtime, client: &Audible) -> anyhow::Resu
     }
 }
 
+/// Fetches the library again for a signed-in session, without asking the
+/// Keychain anew after a denial (unlike [`restore`]).
+pub fn refresh() -> anyhow::Result<Option<Library>> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let _guard = rt.enter();
+    let Some(client) = Audible::from_store(store()?, PROFILE)? else {
+        return Ok(None);
+    };
+    fetch_library(&rt, &client).map(Some)
+}
+
 pub fn restore() -> anyhow::Result<Option<Library>> {
     if std::env::var_os("BETTER_AUDIBLE_SMOKE_TEST").is_some() {
         return Ok(None);

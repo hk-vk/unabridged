@@ -9,6 +9,7 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let result = cx.background_spawn(async { backend::restore() }).await;
             let _ = this.update(cx, |this, cx| {
+                this.library_fetched = Some(std::time::Instant::now());
                 this.account = match result {
                     Ok(Some(library)) => Account::Ready(library),
                     Ok(None) => Account::SignedOut,
@@ -17,6 +18,62 @@ impl Shell {
                 this.load_covers(cx);
                 if this.page == Page::Explore {
                     this.load_explore(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Re-fetches the library (progress, new books) and, when the loaded book
+    /// is paused, its position, at most once a minute. Failures keep what is
+    /// on screen.
+    pub(crate) fn refresh_library(&mut self, cx: &mut Context<Self>) {
+        const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+        if self.refreshing
+            || !matches!(self.account, Account::Ready(_))
+            || self
+                .library_fetched
+                .is_some_and(|at| at.elapsed() < MIN_INTERVAL)
+        {
+            return;
+        }
+        self.refreshing = true;
+        self.library_fetched = Some(std::time::Instant::now());
+        let paused = self
+            .player
+            .as_ref()
+            .filter(|active| !active.player.is_playing() && !self.loading_player)
+            .map(|active| (active.account_key.clone(), active.asin.clone()));
+        cx.spawn(async move |this, cx| {
+            let library = cx.background_spawn(async { backend::refresh() }).await;
+            let position = match paused {
+                Some((key, asin)) => {
+                    let found = cx
+                        .background_spawn({
+                            let asin = asin.clone();
+                            async move { backend::position(&key, &asin) }
+                        })
+                        .await;
+                    found.ok().flatten().map(|millis| (asin, millis))
+                }
+                None => None,
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.refreshing = false;
+                if let Ok(Some(library)) = library
+                    && !library.offline
+                    && matches!(this.account, Account::Ready(_))
+                {
+                    this.account = Account::Ready(library);
+                    this.load_covers(cx);
+                }
+                if let Some((asin, millis)) = position
+                    && let Some(active) = &mut this.player
+                    && active.asin == asin
+                    && !active.player.is_playing()
+                {
+                    active.player.seek(millis as f64 / 1000.);
                 }
                 cx.notify();
             });

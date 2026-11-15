@@ -14,6 +14,13 @@ impl Shell {
             cx.observe_window_appearance(window, |_, window, cx| {
                 ui::Theme::sync_system_appearance(window.appearance(), cx)
             }),
+            // Coming back to the app picks up listening done on other devices
+            // and books added since launch.
+            cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.refresh_library(cx);
+                }
+            }),
             cx.subscribe(
                 &library_search,
                 |this: &mut Self, input, event: &InputEvent, cx| {
@@ -85,6 +92,8 @@ impl Shell {
             download: None,
             player: None,
             loading_player: false,
+            library_fetched: None,
+            refreshing: false,
             covers: Default::default(),
             covers_pending: Default::default(),
             palettes: Default::default(),

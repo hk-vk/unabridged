@@ -176,6 +176,9 @@ struct Shell {
     download: Option<ActiveDownload>,
     player: Option<ActivePlayer>,
     loading_player: bool,
+    /// When the library was last fetched from Audible, to throttle refreshes.
+    library_fetched: Option<std::time::Instant>,
+    refreshing: bool,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,
     covers_pending: std::collections::HashSet<audible::Asin>,
     palettes: std::collections::HashMap<audible::Asin, ui::theme::BookPalette>,

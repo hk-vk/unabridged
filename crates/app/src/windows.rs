@@ -101,6 +101,7 @@ impl Shell {
     /// Brings the main window forward, reopening it on the current page if
     /// it was closed (for example after a click on the Dock icon).
     pub(crate) fn show_main_window(&mut self, cx: &mut Context<Self>) {
+        self.refresh_library(cx);
         if self.main_opening {
             return;
         }
