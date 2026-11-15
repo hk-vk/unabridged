@@ -1,41 +1,17 @@
 //! Transport tests: signing on the wire, retries, error mapping.
 
+mod support;
+
 use std::time::Duration;
 
 use audible::Error;
-use audible::credentials::Secret;
-use audible::http::{HttpClient, RetryPolicy};
-use audible::locale::Endpoints;
-use audible::signing::AdpSigner;
 use base64::Engine;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::signature::Verifier;
 use wiremock::matchers::{header, header_exists, method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-const TOKEN: &str = "{enc:ENC}{key:KEY}{iv:IV}{name:NAME}{serial:Mg==}";
-
-fn key_pem() -> String {
-    std::fs::read_to_string(format!(
-        "{}/tests/fixtures/test_rsa_key.pem",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap()
-}
-
-fn client(server: &MockServer) -> HttpClient {
-    let signer = AdpSigner::new(&Secret::new(TOKEN), &Secret::new(key_pem())).unwrap();
-    HttpClient::new(
-        reqwest::Client::new(),
-        Endpoints::all(&server.uri()),
-        signer,
-    )
-    .with_retry(RetryPolicy {
-        max_attempts: 3,
-        base_delay: Duration::from_millis(5),
-        max_delay: Duration::from_millis(50),
-    })
-}
+use support::{TOKEN, client, key_pem};
 
 /// Recompute the signed string from what actually arrived and verify it
 /// with the public key.
