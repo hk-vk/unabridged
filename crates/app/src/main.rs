@@ -1,6 +1,7 @@
 //! Better Audible's native application shell.
 mod backend;
 mod player;
+mod settings;
 
 use audible::{Marketplace, auth::LoginSession};
 use gpui_kit::{
@@ -14,7 +15,7 @@ use gpui_kit::{
     div, linear_color_stop, linear_gradient, point, px, relative, size,
 };
 use ui::{
-    ActiveTheme, Elevation, ElevationExt, Icon, ThemeSettings,
+    ActiveTheme, Elevation, ElevationExt, Icon,
     components::{
         Button, ButtonShape, ButtonVariant, Cover, CoverSize, Scrubber, ScrubberColors,
         SidebarHeader, SidebarItem, Toolbar,
@@ -38,6 +39,7 @@ enum Page {
     Book,
     CatalogBook,
     NowPlaying,
+    Settings,
 }
 
 enum Account {
@@ -217,6 +219,9 @@ impl Shell {
         ]);
         let sleep_select = cx.new(|cx| SelectState::new(sleep_options, None, window, cx));
         let subscriptions = vec![
+            cx.observe_window_appearance(window, |_, window, cx| {
+                ui::Theme::sync_system_appearance(window.appearance(), cx)
+            }),
             cx.subscribe(
                 &library_search,
                 |_: &mut Self, _, event: &InputEvent, cx| {
@@ -925,7 +930,9 @@ impl Shell {
             format!("{author}, read by {narrator}")
         };
         let image = self.covers.get(&active.asin).cloned();
-        let palette = self.palettes.get(&active.asin).copied().unwrap_or_default();
+        let palette = cx
+            .theme()
+            .book_palette(self.palettes.get(&active.asin).copied());
         let position = active.player.position().max(0.);
         let duration = active.player.duration().max(0.);
         let chapter = current_chapter(&active.chapters, (position * 1000.) as u64);
@@ -1411,6 +1418,9 @@ impl Shell {
     }
 
     fn account_view(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        if self.page == Page::Settings {
+            return self.settings_view(cx);
+        }
         let color = cx.theme().colors.ink_secondary;
         let hairline = cx.theme().colors.hairline;
         let hover_fill = cx.theme().colors.fill;
@@ -1703,6 +1713,7 @@ impl Render for Shell {
             Page::Series | Page::SeriesBooks => "Series",
             Page::Book | Page::CatalogBook => "Book",
             Page::NowPlaying => "Now playing",
+            Page::Settings => "Appearance",
         };
         let account_label = match &self.account {
             Account::Ready(library) => format!(
@@ -1993,6 +2004,7 @@ impl Render for Shell {
                     .child(self.nav("Series", Icon::Layers, Page::Series, cx))
                     .child(self.nav("Finished", Icon::CheckmarkCircle, Page::Finished, cx))
                     .child(div().flex_1())
+                    .child(self.nav("Appearance", Icon::Settings, Page::Settings, cx))
                     .child(
                         div()
                             .px(px(10.))
@@ -2031,13 +2043,7 @@ impl Render for Shell {
 fn main() {
     gpui_kit::application().with_assets(ui::Assets).run(|cx| {
         gpui_kit::init(cx);
-        if let Err(error) = ui::init(
-            ThemeSettings {
-                mode: ui::theme::Mode::Light,
-                ..Default::default()
-            },
-            cx,
-        ) {
+        if let Err(error) = ui::init(backend::load_appearance(), cx) {
             eprintln!("Could not initialize the interface: {error:#}");
             cx.quit();
             return;

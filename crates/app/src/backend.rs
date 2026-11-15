@@ -330,6 +330,36 @@ mod tests {
     }
 
     #[test]
+    fn appearance_preferences_round_trip_and_unknown_values_are_safe() {
+        for mode in ui::theme::Mode::ALL {
+            for accent in ui::theme::AccentTheme::ALL {
+                let settings = ui::ThemeSettings {
+                    mode,
+                    accent,
+                    tint_with_cover: false,
+                };
+                let bytes = serde_json::to_vec(&AppearanceRecord::from(settings)).unwrap();
+                let restored: AppearanceRecord = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(restored.settings(), settings);
+            }
+        }
+        let unknown = AppearanceRecord {
+            mode: "unknown".into(),
+            accent: "unknown".into(),
+            tint_with_cover: true,
+        };
+        assert_eq!(unknown.settings().mode, ui::theme::Mode::Light);
+        assert_eq!(unknown.settings().accent, ui::theme::AccentTheme::Ember);
+    }
+
+    #[test]
+    fn superseded_appearance_writes_are_skipped() {
+        let old = register_appearance_write();
+        let _new = register_appearance_write();
+        assert!(save_appearance(ui::ThemeSettings::default(), old).is_ok());
+    }
+
+    #[test]
     fn obsolete_position_writes_are_discarded_before_accessing_credentials() {
         let asin = audible::Asin::new("TESTPOSITION").unwrap();
         let old = register_save(&asin);
@@ -415,4 +445,76 @@ fn update_bookmark_file(path: &std::path::Path, position: u64, add: bool) -> any
         positions.retain(|saved| *saved != position);
     }
     write_json(path, &positions)
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AppearanceRecord {
+    mode: String,
+    accent: String,
+    tint_with_cover: bool,
+}
+
+impl From<ui::ThemeSettings> for AppearanceRecord {
+    fn from(settings: ui::ThemeSettings) -> Self {
+        Self {
+            mode: settings.mode.label().into(),
+            accent: settings.accent.name().into(),
+            tint_with_cover: settings.tint_with_cover,
+        }
+    }
+}
+
+impl AppearanceRecord {
+    fn settings(&self) -> ui::ThemeSettings {
+        let mode = ui::theme::Mode::ALL
+            .into_iter()
+            .find(|mode| mode.label() == self.mode)
+            .unwrap_or(ui::theme::Mode::Light);
+        let accent = ui::theme::AccentTheme::ALL
+            .into_iter()
+            .find(|accent| accent.name() == self.accent)
+            .unwrap_or_default();
+        ui::ThemeSettings {
+            mode,
+            accent,
+            tint_with_cover: self.tint_with_cover,
+        }
+    }
+}
+
+fn appearance_path() -> anyhow::Result<std::path::PathBuf> {
+    let home =
+        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
+    Ok(std::path::PathBuf::from(home)
+        .join("Library/Application Support/Better Audible/appearance.json"))
+}
+
+pub fn load_appearance() -> ui::ThemeSettings {
+    let fallback = ui::ThemeSettings {
+        mode: ui::theme::Mode::Light,
+        ..Default::default()
+    };
+    appearance_path()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<AppearanceRecord>(&bytes).ok())
+        .map(|record| record.settings())
+        .unwrap_or(fallback)
+}
+
+static APPEARANCE_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static APPEARANCE_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn register_appearance_write() -> u64 {
+    APPEARANCE_VERSION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+pub fn save_appearance(settings: ui::ThemeSettings, version: u64) -> anyhow::Result<()> {
+    let _guard = APPEARANCE_SERIAL
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Could not save appearance"))?;
+    if APPEARANCE_VERSION.load(std::sync::atomic::Ordering::SeqCst) != version {
+        return Ok(());
+    }
+    write_json(&appearance_path()?, &AppearanceRecord::from(settings))
 }
