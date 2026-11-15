@@ -95,6 +95,12 @@ impl Shell {
 
     pub(crate) fn show_main_player(&mut self, cx: &mut Context<Self>) {
         self.open_player(cx);
+        self.show_main_window(cx);
+    }
+
+    /// Brings the main window forward, reopening it on the current page if
+    /// it was closed (for example after a click on the Dock icon).
+    pub(crate) fn show_main_window(&mut self, cx: &mut Context<Self>) {
         if self.main_opening {
             return;
         }

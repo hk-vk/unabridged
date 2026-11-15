@@ -229,8 +229,62 @@ gpui_kit::actions!(
     ]
 );
 
+/// The shell behind the main window, so a Dock click can bring it back.
+struct MainShell(gpui_kit::WeakEntity<Shell>);
+
+impl gpui_kit::Global for MainShell {}
+
+/// Opens the main window with a fresh shell.
+fn open_main_window(cx: &mut gpui_kit::App) {
+    let bounds = Bounds::new(point(px(100.), px(100.)), size(px(1200.), px(800.)));
+    match cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
+            focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
+            titlebar: Some(TitlebarOptions {
+                appears_transparent: cfg!(target_os = "macos"),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        |window, cx| {
+            let view = cx.new(|cx| Shell::new(window, cx));
+            cx.set_global(MainShell(view.downgrade()));
+            cx.new(|cx| Root::new(view, window, cx))
+        },
+    ) {
+        Ok(_handle) => {
+            #[cfg(debug_assertions)]
+            smoke_open_mini(_handle, cx);
+            if std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none() {
+                cx.activate(true);
+            }
+        }
+        Err(error) => {
+            eprintln!("Could not open the app window: {error:#}");
+            cx.quit();
+        }
+    }
+}
+
+/// A Dock click or relaunch while running: show the main window again. The
+/// shell survives while the mini player is open; otherwise start a new one.
+fn reopen(cx: &mut gpui_kit::App) {
+    let shell = cx
+        .try_global::<MainShell>()
+        .and_then(|main| main.0.upgrade());
+    match shell {
+        Some(shell) => shell.update(cx, |shell, cx| shell.show_main_window(cx)),
+        None => open_main_window(cx),
+    }
+    cx.activate(true);
+}
+
 fn main() {
-    gpui_kit::application().with_assets(ui::Assets).run(|cx| {
+    let app = gpui_kit::application().with_assets(ui::Assets);
+    app.on_reopen(reopen);
+    app.run(|cx| {
         gpui_kit::init(cx);
         cx.bind_keys([gpui_kit::KeyBinding::new("cmd-f", FocusSearch, None)]);
         if let Err(error) = ui::init(backend::load_appearance(), cx) {
@@ -238,35 +292,7 @@ fn main() {
             cx.quit();
             return;
         }
-        let bounds = Bounds::new(point(px(100.), px(100.)), size(px(1200.), px(800.)));
-        match cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
-                focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
-                titlebar: Some(TitlebarOptions {
-                    appears_transparent: cfg!(target_os = "macos"),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |window, cx| {
-                let view = cx.new(|cx| Shell::new(window, cx));
-                cx.new(|cx| Root::new(view, window, cx))
-            },
-        ) {
-            Ok(_handle) => {
-                #[cfg(debug_assertions)]
-                smoke_open_mini(_handle, cx);
-                if std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none() {
-                    cx.activate(true);
-                }
-            }
-            Err(error) => {
-                eprintln!("Could not open the app window: {error:#}");
-                cx.quit();
-            }
-        }
+        open_main_window(cx);
     });
 }
 
