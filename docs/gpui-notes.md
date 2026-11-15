@@ -70,3 +70,60 @@ the file it came from.
   own border and background so it can sit inside our search bar. `InputState::new(window, cx)
   .placeholder(..)` (gpui-base `input/base/state.rs`); it emits `InputEvent::{Change, PressEnter, Focus, Blur}`.
   Its text and caret colours come from the gpui-component `Theme` global, so we sync that from our theme.
+
+## Elevation (shadows and button polish)
+
+What GPUI does (`window.rs` `paint_drop_shadows` / `paint_inset_shadows`, `shaders.metal` `shadow_fragment`):
+
+- Drop shadows: bounds are `(bounds + offset).dilate(spread)`, snapped outward with `cover_bounds`
+  (floor/ceil to device pixels), but the corner radii stay the element's radii; they are not grown
+  by the spread.
+- Inset shadows: the hole is `(bounds + offset).dilate(-spread)` with radii shrunk by the spread, and the
+  result is clipped to the element's rounded SDF with a one-pixel anti-aliased edge.
+- `blur_radius == 0` is special-cased to an anti-aliased SDF edge, so zero-blur insets are crisp.
+- Borders are snapped with `round_stroke_to_device_pixel` (never thinner than one device pixel) and share
+  the element's SDF, so they are concentric with the fill by construction.
+
+Why the mock-up looks rough: it stacks `inset 0 1px 0` highlights, a `0 0 0 0.5px` spread ring and
+blurred drops. In GPUI that ring keeps the element radius while growing outward by 0.5 pt, and its bounds
+snap outward, so the halo is 0 to 1 device px wide depending on position, with corners that do not
+follow the fill. Highlights at a fixed 1 pt offset also collide with whatever edge is drawn.
+
+The pattern (`crates/ui/src/elevation.rs`), similar to how AppKit draws bezel buttons:
+
+1. **Ring = border inside the bounds**, exactly one device pixel (`1 / scale_factor`): 0.5 pt at 2x,
+   1 pt at 1x. Never a spread shadow.
+2. **Highlight / shade = zero-blur inset shadow** offset by `ring + 1 device px`, so exactly one device
+   pixel of light (top) or shade (bottom) shows just inside the ring at any scale. The crescent at the
+   corners comes from the clipped SDF, so it tapers cleanly.
+3. **Inner stroke** (floating player, translucent windows) = inset shadow with `spread = ring + 1 device px`;
+   GPUI shrinks the hole radius by the spread, so the stroke stays concentric.
+4. **Drops have zero spread** and only offset and blur (tight contact shadow plus soft ambient or coloured glow).
+5. Every level is named (`Elevation::{CoverShelf, Cover, CoverHero, CoverStage, ButtonPrimary,
+   ButtonSecondary, Chip, ButtonInk, ButtonLight, ButtonGlass, Field, SwitchOn/Off, Knob, FloatingPlayer,
+   Banner, WindowMaterial}`) and resolves against the theme, so no component writes a shadow literal. Unit
+   tests assert that no level uses spread drops and that every highlight sits inside a ring.
+
+Verified on a 2x display with `Window::render_to_image` (see "Snapshots"): rings are a single crisp device
+pixel, corners concentric, no halo. 1x follows from the same arithmetic (ring and band are whole device
+pixels by construction) but was not rendered here, as no 1x display was attached.
+
+Clipping caveat: GPUI content masks are rectangles, so `overflow_hidden` does not clip to rounded corners.
+Children that touch a rounded parent's corners round their own corners: cover images take the frame's
+radius, the current-chapter progress fill rounds its leading corners, and grouped-list edge rows round to
+`concentric(card_radius, border)`.
+
+## Icons
+
+Hugeicons free (`@hugeicons/core-free-icons` 4.4.0, MIT; licence in `assets/icons/LICENSE.md`), stroke-rounded at
+the set's 1.5 stroke. `tools/hugeicons-to-svg.py` converts the package's ESM arrays to SVG files; play and pause
+are also filled (`fill="currentColor"`) to match the design's solid transport glyphs. `ui::Icon` is the only way to
+reference them: a macro generates the enum, its `icons/<name>.svg` path and the `include_bytes!` table that
+`ui::Assets` serves, so a missing file fails the build.
+
+## Snapshots
+
+`Window::render_to_image()` (`window.rs:3095`) renders the current scene offscreen through Metal and returns an
+`RgbaImage`. It needs the `test-support` feature on both `gpui-pre` and `gpui-pre-macos`; enabling it through
+`gpui-kit/test-support` fails to resolve (it drags in gpui-fast with a conflicting taffy pin), so the app's
+`snapshot` feature enables those two crates directly. This avoids needing screen-recording permission.
