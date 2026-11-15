@@ -7,9 +7,80 @@ use std::sync::Arc;
 
 const PROFILE: &str = "default";
 
+// Keep Keychain access to the beginning of a session and credential updates.
+// Operations otherwise restore independent clients and would repeatedly ask
+// macOS for the same item, including during periodic progress sync.
+struct SessionStore {
+    inner: Arc<dyn CredentialStore>,
+    cache: std::sync::Mutex<
+        std::collections::HashMap<String, Option<audible::credentials::Credentials>>,
+    >,
+}
+
+impl SessionStore {
+    fn new(inner: Arc<dyn CredentialStore>) -> Self {
+        Self {
+            inner,
+            cache: Default::default(),
+        }
+    }
+}
+
+impl CredentialStore for SessionStore {
+    fn load(&self, profile: &str) -> audible::Result<Option<audible::credentials::Credentials>> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| audible::Error::CredentialStore("session store lock failed".into()))?;
+        if let Some(value) = cache.get(profile) {
+            return Ok(value.clone());
+        }
+        let value = self.inner.load(profile)?;
+        cache.insert(profile.to_owned(), value.clone());
+        Ok(value)
+    }
+
+    fn save(
+        &self,
+        profile: &str,
+        credentials: &audible::credentials::Credentials,
+    ) -> audible::Result<()> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| audible::Error::CredentialStore("session store lock failed".into()))?;
+        if let Err(error) = self.inner.save(profile, credentials) {
+            cache.remove(profile);
+            return Err(error);
+        }
+        cache.insert(profile.to_owned(), Some(credentials.clone()));
+        Ok(())
+    }
+
+    fn delete(&self, profile: &str) -> audible::Result<()> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| audible::Error::CredentialStore("session store lock failed".into()))?;
+        if let Err(error) = self.inner.delete(profile) {
+            cache.remove(profile);
+            return Err(error);
+        }
+        cache.insert(profile.to_owned(), None);
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn store() -> anyhow::Result<Arc<dyn CredentialStore>> {
-    Ok(Arc::new(audible::credentials::KeychainStore::new()))
+    static STORE: std::sync::OnceLock<Arc<dyn CredentialStore>> = std::sync::OnceLock::new();
+    Ok(STORE
+        .get_or_init(|| {
+            Arc::new(SessionStore::new(Arc::new(
+                audible::credentials::KeychainStore::new(),
+            )))
+        })
+        .clone())
 }
 #[cfg(not(target_os = "macos"))]
 fn store() -> anyhow::Result<Arc<dyn CredentialStore>> {
@@ -284,6 +355,54 @@ pub fn search_catalog(query: String) -> anyhow::Result<Vec<audible::models::Prod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_store_reuses_reads_and_tracks_writes_and_deletes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        #[derive(Default)]
+        struct CountingStore {
+            inner: audible::credentials::MemoryStore,
+            reads: AtomicUsize,
+        }
+        impl CredentialStore for CountingStore {
+            fn load(
+                &self,
+                profile: &str,
+            ) -> audible::Result<Option<audible::credentials::Credentials>> {
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                self.inner.load(profile)
+            }
+            fn save(
+                &self,
+                profile: &str,
+                credentials: &audible::credentials::Credentials,
+            ) -> audible::Result<()> {
+                self.inner.save(profile, credentials)
+            }
+            fn delete(&self, profile: &str) -> audible::Result<()> {
+                self.inner.delete(profile)
+            }
+        }
+        let persistent = Arc::new(CountingStore::default());
+        let store = SessionStore::new(persistent.clone());
+        assert!(store.load("default").unwrap().is_none());
+        assert!(store.load("default").unwrap().is_none());
+        assert_eq!(persistent.reads.load(Ordering::SeqCst), 1);
+        let credentials: audible::credentials::Credentials =
+            serde_json::from_value(serde_json::json!({
+                "marketplace": "united_states",
+                "device_serial": "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7cDe0f",
+                "device_type": "test", "customer_id": "test", "adp_token": "test",
+                "device_private_key": "test", "access_token": "test",
+                "access_token_expires": "2030-01-01T00:00:00Z", "refresh_token": "test"
+            }))
+            .unwrap();
+        store.save("default", &credentials).unwrap();
+        assert_eq!(store.load("default").unwrap(), Some(credentials));
+        store.delete("default").unwrap();
+        assert!(store.load("default").unwrap().is_none());
+        assert_eq!(persistent.reads.load(Ordering::SeqCst), 1);
+    }
     #[test]
     fn position_cache_round_trips_and_account_paths_reject_traversal() {
         assert!(account_directory("../other-account").is_err());
