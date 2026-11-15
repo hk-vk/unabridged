@@ -21,7 +21,7 @@ impl Shell {
         cx.notify();
     }
 
-    pub(super) fn settings_view(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    pub(crate) fn settings_view(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let settings = theme.settings;
         let modes = ui::theme::Mode::ALL

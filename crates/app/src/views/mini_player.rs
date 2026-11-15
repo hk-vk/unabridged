@@ -2,15 +2,15 @@
 use super::*;
 
 /// Mini player window size, as in the design.
-pub(super) const SIZE: (f32, f32) = (420., 132.);
+pub(crate) const SIZE: (f32, f32) = (420., 132.);
 
-pub(super) struct MiniPlayer {
+pub(crate) struct MiniPlayer {
     shell: Entity<Shell>,
     _subscription: gpui_kit::Subscription,
 }
 
 impl MiniPlayer {
-    pub(super) fn new(shell: Entity<Shell>, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(shell: Entity<Shell>, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&shell, |_, _, cx| cx.notify());
         Self {
             shell,
@@ -23,7 +23,7 @@ impl MiniPlayer {
 ///
 /// GPUI opens floating windows as panels that AppKit hides whenever the app
 /// goes to the background; the native helper turns that off.
-pub(super) fn float_everywhere(window: &Window) {
+pub(crate) fn float_everywhere(window: &Window) {
     #[cfg(target_os = "macos")]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};

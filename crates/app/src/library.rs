@@ -1,0 +1,363 @@
+//! Account, library and catalog loading: everything that talks to the backend
+//! except playback.
+use crate::*;
+
+impl Shell {
+    pub(crate) fn restore(&mut self, cx: &mut Context<Self>) {
+        self.account = Account::Loading;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { backend::restore() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.account = match result {
+                    Ok(Some(library)) => Account::Ready(library),
+                    Ok(None) => Account::SignedOut,
+                    Err(error) => Account::Error(error.to_string()),
+                };
+                this.load_covers(cx);
+                if this.page == Page::Explore {
+                    this.load_explore(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn begin_sign_in(&mut self, cx: &mut Context<Self>) {
+        let selected = self.marketplace.read(cx).selected_value().copied();
+        let Some(marketplace) = Marketplace::ALL
+            .into_iter()
+            .find(|m| Some(m.display_name()) == selected)
+        else {
+            self.download_notice = Some("Choose your Audible marketplace to continue.".into());
+            cx.notify();
+            return;
+        };
+        self.download_notice = None;
+        let session = LoginSession::new(marketplace);
+        match session.authorization_url() {
+            Ok(url) => {
+                cx.open_url(url.as_str());
+                self.account = Account::SigningIn(Box::new(session));
+            }
+            Err(error) => self.account = Account::Error(error.to_string()),
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn finish_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Account::SigningIn(session) = &self.account else {
+            return;
+        };
+        let redirect = self.redirect.read(cx).value().to_string();
+        self.redirect
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        let valid_host = reqwest::Url::parse(redirect.trim())
+            .ok()
+            .is_some_and(|url| {
+                url.scheme() == "https"
+                    && url.host_str()
+                        == Some(format!("www.amazon.{}", session.marketplace().domain()).as_str())
+            });
+        if !valid_host || !LoginSession::is_redirect(&redirect) {
+            self.account = Account::Error("That URL does not contain the Audible sign-in redirect. Start sign-in again and copy the entire final URL.".into());
+            cx.notify();
+            return;
+        }
+        let session = (**session).clone();
+        self.account = Account::Loading;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::sign_in(session, redirect) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.account = match result {
+                    Ok(library) => Account::Ready(library),
+                    Err(error) => Account::Error(error.to_string()),
+                };
+                this.load_covers(cx);
+                if this.page == Page::Explore {
+                    this.load_explore(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn search_catalog(&mut self, cx: &mut Context<Self>) {
+        let query = self.search.read(cx).value().trim().to_string();
+        if query.is_empty() || self.searching {
+            return;
+        }
+        self.searching = true;
+        self.showing_search = true;
+        self.search_results.clear();
+        self.search_message = Some("Searching Audible…".into());
+        cx.notify();
+        let display_query = query.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::search_catalog(query) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.searching = false;
+                match result {
+                    Ok(products) => {
+                        this.search_message = Some(if products.is_empty() {
+                            format!("No results for “{display_query}”.")
+                        } else {
+                            format!("{} results for “{display_query}”", products.len())
+                        });
+                        this.search_results = products;
+                        this.load_covers(cx);
+                    }
+                    Err(error) => this.search_message = Some(format!("Search failed: {error}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn load_explore(&mut self, cx: &mut Context<Self>) {
+        if self.explore_loading
+            || self.explore_feed.is_some()
+            || !matches!(self.account, Account::Ready(_))
+        {
+            return;
+        }
+        self.explore_loading = true;
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { backend::explore() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.explore_loading = false;
+                match result {
+                    Ok(feed) => {
+                        this.explore_feed = Some(feed);
+                        this.load_covers(cx);
+                    }
+                    Err(error) => {
+                        this.search_message = Some(format!("Could not load Explore: {error}"))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn browse_genre(
+        &mut self,
+        id: audible::models::CategoryId,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.searching {
+            return;
+        }
+        self.showing_search = true;
+        self.searching = true;
+        self.search_results.clear();
+        self.search_message = Some(format!("Loading {name}…"));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::browse_genre(id) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.searching = false;
+                match result {
+                    Ok(products) => {
+                        this.search_message = Some(if products.is_empty() {
+                            format!("No books found in {name}.")
+                        } else {
+                            format!("{name} · {} books", products.len())
+                        });
+                        this.search_results = products;
+                        this.load_covers(cx);
+                    }
+                    Err(error) => {
+                        this.search_message = Some(format!("Could not load {name}: {error}"))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn load_covers(&mut self, cx: &mut Context<Self>) {
+        let Account::Ready(library) = &self.account else {
+            return;
+        };
+        let mut covers: Vec<_> = library
+            .items
+            .iter()
+            .filter_map(|item| {
+                item.cover_url(500)
+                    .map(|url| (item.asin.clone(), url.to_string()))
+            })
+            .collect();
+        if let Some(feed) = &self.explore_feed {
+            covers.extend(feed.new_releases.iter().filter_map(|item| {
+                item.cover_url(500)
+                    .map(|url| (item.asin.clone(), url.to_string()))
+            }));
+        }
+        covers.extend(self.search_results.iter().filter_map(|item| {
+            item.cover_url(500)
+                .map(|url| (item.asin.clone(), url.to_string()))
+        }));
+        covers.retain(|(asin, _)| {
+            !self.covers.contains_key(asin) && self.covers_pending.insert(asin.clone())
+        });
+        let queue = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+            covers,
+        )));
+        for _ in 0..4 {
+            let queue = queue.clone();
+            cx.spawn(async move |this, cx| {
+                loop {
+                    let next = queue.lock().ok().and_then(|mut queue| queue.pop_front());
+                    let Some((asin, url)) = next else { break };
+                    let key = asin.clone();
+                    let result = cx
+                        .background_spawn(async move {
+                            let path = backend::cover(&asin, &url)?;
+                            let palette = image::ImageReader::open(&path)
+                                .ok()
+                                .and_then(|reader| reader.with_guessed_format().ok())
+                                .and_then(|reader| reader.decode().ok())
+                                .and_then(|image| {
+                                    let pixels = image.thumbnail(128, 128).to_rgba8();
+                                    ui::theme::BookPalette::dominant_color(pixels.as_raw())
+                                })
+                                .map(ui::theme::BookPalette::from_cover_color);
+                            Ok::<_, anyhow::Error>((path, palette))
+                        })
+                        .await;
+                    if this
+                        .update(cx, |this, cx| {
+                            this.covers_pending.remove(&key);
+                            if let Ok((path, palette)) = result {
+                                if let Some(palette) = palette {
+                                    this.palettes.insert(key.clone(), palette);
+                                }
+                                this.covers.insert(key, path);
+                                cx.notify();
+                            }
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
+    pub(crate) fn download(
+        &mut self,
+        key: String,
+        asin: audible::Asin,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.download.is_some() {
+            return;
+        }
+        let event = std::sync::Arc::new(std::sync::Mutex::new(audible::DownloadEvent::Licensing));
+        self.download = Some(ActiveDownload {
+            asin: asin.clone(),
+            title: title.clone(),
+            event: event.clone(),
+        });
+        self.download_notice = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::download(&key, asin, event) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.download = None;
+                this.download_notice = Some(match result {
+                    Ok(_) => format!("{title} is downloaded to this Mac."),
+                    Err(error) => format!("Download failed: {error}"),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn load_bookmarks(&mut self, cx: &mut Context<Self>) {
+        let Account::Ready(library) = &self.account else {
+            return;
+        };
+        let key = library.account_key.clone();
+        let asins = library
+            .items
+            .iter()
+            .map(|item| item.asin.clone())
+            .collect::<Vec<_>>();
+        self.bookmarks_loading = true;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { backend::bookmarks(&key, &asins) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.bookmarks_loading = false;
+                match result {
+                    Ok(bookmarks) => this.bookmarks = bookmarks,
+                    Err(error) => {
+                        this.download_notice = Some(format!("Could not load bookmarks: {error}"))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn change_bookmark(
+        &mut self,
+        asin: audible::Asin,
+        position: u64,
+        add: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Account::Ready(library) = &self.account else {
+            return;
+        };
+        let key = library.account_key.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(
+                    async move { backend::update_bookmark(&key, &asin, position, add) },
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.download_notice = Some(match result {
+                    Ok(()) if add => "Bookmark saved on this Mac.".into(),
+                    Ok(()) => "Bookmark removed.".into(),
+                    Err(error) => format!("Could not save bookmark: {error}"),
+                });
+                this.load_bookmarks(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn add_current_bookmark(&mut self, cx: &mut Context<Self>) {
+        if let Some(player) = &self.player {
+            let asin = player.asin.clone();
+            let position = (player.player.position().max(0.) * 1000.) as u64;
+            self.change_bookmark(asin, position, true, cx);
+        }
+    }
+}
