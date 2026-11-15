@@ -12,16 +12,17 @@ use gpui_kit::{
     component::{
         Root,
         input::{Input, InputEvent, InputState},
-        select::{SearchableVec, Select, SelectEvent, SelectState},
+        select::{SearchableVec, Select, SelectState},
         shimmer::ShimmerText,
         skeleton::Skeleton,
     },
     div, linear_color_stop, linear_gradient, point, px, relative, size,
 };
 use ui::{
-    ActiveTheme, Elevation, ElevationExt, Icon,
+    ActiveTheme, Elevation, ElevationExt, Icon, TypographyExt,
     components::{
-        Button, ButtonShape, ButtonVariant, Cover, CoverSize, Scrubber, ScrubberColors,
+        BackLink, Button, ButtonShape, ButtonVariant, Chip, ChipStyle, Cover, CoverSize,
+        IconButton, Scrubber, ScrubberColors, SearchField, SectionHeader, SegmentedProgress,
         SidebarHeader, SidebarItem, Toolbar,
     },
 };
@@ -96,6 +97,23 @@ enum Page {
     CatalogBook,
     NowPlaying,
     Settings,
+}
+
+/// The name a back link shows for `page`.
+fn page_name(page: Page) -> &'static str {
+    match page {
+        Page::Progress => "In progress",
+        Page::Explore | Page::Search => "Explore",
+        Page::OnThisMac => "On this Mac",
+        Page::Bookmarks => "Bookmarks",
+        Page::Finished => "Finished",
+        Page::Authors | Page::AuthorBooks => "Authors",
+        Page::Series | Page::SeriesBooks => "Series",
+        Page::Book | Page::CatalogBook => "Book",
+        Page::AllBooks => "All books",
+        Page::Settings => "Settings",
+        Page::Library | Page::NowPlaying => "Library",
+    }
 }
 
 enum Account {
@@ -214,6 +232,14 @@ impl SleepTimer {
             Self::EndOfChapter { .. } => "Stop after this chapter".into(),
         }
     }
+
+    /// Text for the sleep chip: "Sleep" when off, otherwise the countdown.
+    fn chip_label(&self, now: std::time::Instant) -> String {
+        match self {
+            Self::Off => "Sleep".into(),
+            _ => self.label(now),
+        }
+    }
 }
 
 struct ActivePlayer {
@@ -241,7 +267,6 @@ struct Shell {
     bookmarks: Vec<(audible::Asin, u64)>,
     bookmarks_loading: bool,
     sleep: SleepTimer,
-    sleep_select: Entity<SelectState<SearchableVec<&'static str>>>,
     account: Account,
     marketplace: Entity<SelectState<SearchableVec<&'static str>>>,
     suggested_marketplace: Option<Marketplace>,
@@ -269,28 +294,27 @@ impl Shell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let redirect =
             cx.new(|cx| InputState::new(window, cx).placeholder("Paste the final URL here"));
-        let search = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search titles, authors or narrators")
-        });
+        let search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search the Audible catalog"));
         let library_search = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search titles, authors or narrators")
         });
-        let sleep_options = SearchableVec::new(vec![
-            "Off",
-            "15 minutes",
-            "30 minutes",
-            "1 hour",
-            "End of chapter",
-        ]);
-        let sleep_select = cx.new(|cx| SelectState::new(sleep_options, None, window, cx));
         let subscriptions = vec![
             cx.observe_window_appearance(window, |_, window, cx| {
                 ui::Theme::sync_system_appearance(window.appearance(), cx)
             }),
             cx.subscribe(
                 &library_search,
-                |_: &mut Self, _, event: &InputEvent, cx| {
+                |this: &mut Self, input, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
+                        // Typing in the toolbar field shows results; clearing it
+                        // returns to the library.
+                        let empty = input.read(cx).value().trim().is_empty();
+                        if !empty && this.page != Page::Search {
+                            this.page = Page::Search;
+                        } else if empty && this.page == Page::Search {
+                            this.page = Page::Library;
+                        }
                         cx.notify();
                     }
                 },
@@ -300,20 +324,6 @@ impl Shell {
                     this.search_catalog(cx);
                 }
             }),
-            cx.subscribe_in(
-                &sleep_select,
-                window,
-                |this: &mut Self,
-                 select,
-                 event: &SelectEvent<SearchableVec<&'static str>>,
-                 window,
-                 cx| {
-                    if let SelectEvent::Confirm(Some(choice)) = event {
-                        this.set_sleep(choice, cx);
-                        select.update(cx, |select, cx| select.set_selected_index(None, window, cx));
-                    }
-                },
-            ),
         ];
         let marketplaces = SearchableVec::new(
             Marketplace::ALL
@@ -345,7 +355,6 @@ impl Shell {
             bookmarks: Vec::new(),
             bookmarks_loading: false,
             sleep: SleepTimer::Off,
-            sleep_select,
             account: Account::Loading,
             marketplace,
             suggested_marketplace,
@@ -1160,6 +1169,35 @@ impl Shell {
         .detach();
     }
 
+    /// Steps the sleep chip: off, 15 min, 30 min, 1 hour, end of chapter, off.
+    fn cycle_sleep(&mut self, cx: &mut Context<Self>) {
+        let next = match &self.sleep {
+            SleepTimer::Off => "15 minutes",
+            SleepTimer::Deadline(deadline) => {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                if left <= std::time::Duration::from_secs(15 * 60) {
+                    "30 minutes"
+                } else if left <= std::time::Duration::from_secs(30 * 60) {
+                    "1 hour"
+                } else {
+                    "End of chapter"
+                }
+            }
+            SleepTimer::EndOfChapter { .. } => "Off",
+        };
+        self.set_sleep(next, cx);
+    }
+
+    /// Where the back link goes, named for the destination.
+    fn back_label(&self) -> &'static str {
+        let destination = if self.previous_page == self.page {
+            Page::Library
+        } else {
+            self.previous_page
+        };
+        page_name(destination)
+    }
+
     fn set_sleep(&mut self, choice: &str, cx: &mut Context<Self>) {
         let now = std::time::Instant::now();
         self.sleep = match choice {
@@ -1273,7 +1311,9 @@ impl Shell {
             0.
         };
         let time = model::format::clock(std::time::Duration::from_secs(elapsed as u64));
-        let total = model::format::clock(std::time::Duration::from_secs(segment_length as u64));
+        let book_left = model::format::book_left_long(std::time::Duration::from_secs(
+            (duration - position).max(0.) as u64,
+        ));
         let left = model::format::clock(std::time::Duration::from_secs(remaining));
         let playing = active.player.is_playing();
         let speed = active.player.rate();
@@ -1366,6 +1406,14 @@ impl Shell {
         } else {
             None
         };
+        let field_pill = ChipStyle::Outline {
+            outline: palette.on_field_track,
+            content: palette.on_field,
+        };
+        let field_pill_muted = ChipStyle::Outline {
+            outline: palette.on_field_track,
+            content: palette.on_field_muted,
+        };
         let volume_weak = cx.entity().downgrade();
         let volume_control = Scrubber::new(
             "full-volume",
@@ -1397,42 +1445,43 @@ impl Shell {
             .text_color(palette.on_field)
             .child(
                 div()
-                    .h(px(58.))
+                    .h(px(52.))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .pl(px(100.))
-                    .pr(px(28.))
+                    .pl(px(84.))
+                    .pr(px(20.))
+                    .gap(px(10.))
                     .child(
-                        Button::new("player-back")
-                            .label("Back")
-                            .icon(Icon::ArrowLeft)
-                            .variant(ButtonVariant::Glass(palette))
+                        BackLink::new("player-back", self.back_label())
+                            .color(palette.on_field_muted)
                             .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
                     )
                     .child(div().flex_1().min_w_0())
                     .child(
-                        Button::new("open-mini")
-                            .label("Mini player")
-                            .variant(ButtonVariant::Glass(palette))
+                        IconButton::new("open-mini", Icon::Pip, 17.)
+                            .hit_area(28.)
+                            .color(palette.on_field_muted)
+                            .hover_fill(palette.on_field_track)
+                            .tooltip("Open mini player")
                             .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
                     )
                     .child(
-                        Button::new("add-bookmark")
-                            .label("Bookmark")
-                            .icon(Icon::BookmarkAdd)
-                            .variant(ButtonVariant::Glass(palette))
-                            .on_click(cx.listener(|this, _, _, cx| this.add_current_bookmark(cx))),
-                    )
-                    .child(
-                        Button::new("show-chapters")
-                            .label(if self.chapters_open {
-                                "Hide chapters"
+                        Chip::new("show-chapters")
+                            .label("Chapters")
+                            .icon(Icon::Chapters, palette.on_field)
+                            .height(ui::metrics::size::POPUP)
+                            .style(if self.chapters_open {
+                                ChipStyle::Tint {
+                                    fill: palette.on_field_track,
+                                    content: palette.on_field,
+                                }
                             } else {
-                                "Chapters"
+                                ChipStyle::Tint {
+                                    fill: gpui_kit::transparent_black(),
+                                    content: palette.on_field,
+                                }
                             })
-                            .icon(Icon::Chapters)
-                            .variant(ButtonVariant::Glass(palette))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.chapters_open = !this.chapters_open;
                                 cx.notify();
@@ -1459,9 +1508,11 @@ impl Shell {
                             .child(message.clone()),
                     )
                     .child(
-                        Button::new("dismiss-player-status")
-                            .label("Dismiss")
-                            .variant(ButtonVariant::Glass(palette))
+                        IconButton::new("dismiss-player-status", Icon::Cancel, 14.)
+                            .hit_area(24.)
+                            .color(palette.on_field_muted)
+                            .hover_fill(palette.on_field_track)
+                            .tooltip("Dismiss")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.download_notice = None;
                                 cx.notify();
@@ -1537,65 +1588,57 @@ impl Shell {
                                     .text_size(px(12.))
                                     .text_color(palette.on_field_muted)
                                     .child(time)
-                                    .child(total),
+                                    .child(book_left),
                             ),
                     )
                     .children(chapter_panel),
             )
-            .children((!matches!(self.sleep, SleepTimer::Off)).then(|| {
-                div()
-                    .px(px(if compact { 24. } else { 56. }))
-                    .text_size(px(12.))
-                    .text_color(palette.on_field_muted)
-                    .child(self.sleep.label(std::time::Instant::now()))
-            }))
             .child(
                 div()
-                    .h(px(120.))
+                    .h(px(if compact { 112. } else { 140. }))
                     .flex_none()
                     .px(px(if compact { 24. } else { 56. }))
                     .flex()
                     .items_center()
                     .child(
                         div()
-                            .w(px(if compact { 190. } else { 220. }))
-                            .flex_none()
+                            .flex_1()
+                            .min_w_0()
                             .flex()
                             .items_center()
-                            .gap(px(8.))
+                            .gap(px(10.))
                             .child(
-                                Button::new("full-speed")
-                                    .label(format!("{speed}×"))
-                                    .variant(ButtonVariant::Glass(palette))
+                                Chip::new("full-speed")
+                                    .label(model::format::speed(speed))
+                                    .height(ui::metrics::size::FIELD_PILL)
+                                    .style(field_pill)
+                                    .text(ui::text::BODY_MEDIUM)
                                     .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
                             )
                             .child(
-                                div().w(px(if compact { 120. } else { 145. })).child(
-                                    Select::new(&self.sleep_select)
-                                        .placeholder("Timer")
-                                        .accessibility_label("Sleep timer")
-                                        .appearance(false)
-                                        .bg(palette.on_field_track)
-                                        .rounded(px(8.))
-                                        .menu_width(px(180.)),
-                                ),
+                                Chip::new("full-sleep")
+                                    .label(self.sleep.chip_label(std::time::Instant::now()))
+                                    .icon(Icon::Moon, palette.on_field)
+                                    .height(ui::metrics::size::FIELD_PILL)
+                                    .style(if matches!(self.sleep, SleepTimer::Off) {
+                                        field_pill_muted
+                                    } else {
+                                        field_pill
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| this.cycle_sleep(cx))),
                             ),
                     )
                     .child(
                         div()
-                            .flex_1()
+                            .flex_none()
                             .flex()
                             .items_center()
-                            .justify_center()
-                            .gap(px(if compact { 16. } else { 30. }))
+                            .gap(px(if compact { 24. } else { 40. }))
                             .child(
-                                Button::new("full-back30")
-                                    .icon(Icon::Back30)
-                                    .variant(ButtonVariant::Glass(palette))
-                                    .shape(ButtonShape::Circle {
-                                        diameter: 44.,
-                                        icon: 24.,
-                                    })
+                                IconButton::new("full-back30", Icon::Back30, 32.)
+                                    .hit_area(40.)
+                                    .color(palette.on_field)
+                                    .tooltip("Back 30 seconds")
                                     .on_click(cx.listener(|this, _, _, cx| this.skip(-30., cx))),
                             )
                             .child(
@@ -1611,34 +1654,43 @@ impl Shell {
                                     ),
                             )
                             .child(
-                                Button::new("full-forward30")
-                                    .icon(Icon::Forward30)
-                                    .variant(ButtonVariant::Glass(palette))
-                                    .shape(ButtonShape::Circle {
-                                        diameter: 44.,
-                                        icon: 24.,
-                                    })
+                                IconButton::new("full-forward30", Icon::Forward30, 32.)
+                                    .hit_area(40.)
+                                    .color(palette.on_field)
+                                    .tooltip("Forward 30 seconds")
                                     .on_click(cx.listener(|this, _, _, cx| this.skip(30., cx))),
                             ),
                     )
                     .child(
                         div()
-                            .w(px(if compact { 160. } else { 220. }))
-                            .flex_none()
+                            .flex_1()
+                            .min_w_0()
                             .flex()
                             .items_center()
                             .justify_end()
-                            .gap(px(8.))
+                            .gap(px(18.))
                             .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(palette.on_field_muted)
-                                    .child("Volume"),
+                                IconButton::new("add-bookmark", Icon::BookmarkAdd, 18.)
+                                    .hit_area(28.)
+                                    .color(palette.on_field_muted)
+                                    .hover_fill(palette.on_field_track)
+                                    .tooltip("Add bookmark")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.add_current_bookmark(cx)),
+                                    ),
                             )
                             .child(
                                 div()
-                                    .w(px(if compact { 76. } else { 100. }))
-                                    .child(volume_control),
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(
+                                        ui::icon(Icon::VolumeLow)
+                                            .flex_none()
+                                            .size(px(18.))
+                                            .text_color(palette.on_field_muted),
+                                    )
+                                    .child(div().w(px(96.)).child(volume_control)),
                             ),
                     ),
             );
@@ -1682,6 +1734,7 @@ impl Shell {
         title: &'static str,
         id: &'static str,
         books: &[&audible::models::LibraryItem],
+        cover_side: f32,
         target: Page,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
@@ -1690,25 +1743,14 @@ impl Shell {
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(19.))
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .child(title),
-                    )
-                    .child(Button::new(format!("{id}-all")).label("See all").on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            this.page = target;
-                            this.navigation_generation += 1;
-                            cx.notify();
-                        }),
-                    )),
-            )
+            .child(SectionHeader::new(format!("{id}-all"), title).action(
+                "See all",
+                cx.listener(move |this, _, _, cx| {
+                    this.page = target;
+                    this.navigation_generation += 1;
+                    cx.notify();
+                }),
+            ))
             .child(
                 div()
                     .flex()
@@ -1724,19 +1766,16 @@ impl Shell {
                             .listening_status
                             .as_ref()
                             .and_then(|status| status.time_remaining_seconds)
+                            .filter(|_| book_progress(item).unwrap_or(0.) > 0.)
                             .map(|seconds| {
                                 model::format::time_left(std::time::Duration::from_secs(seconds))
-                            })
-                            .or_else(|| {
-                                book_progress(item).map(|percent| format!("{percent:.0}% complete"))
                             })
                             .unwrap_or(author);
                         div()
                             .id(format!("{id}-{asin}"))
-                            .w(px(142.))
+                            .w(px(cover_side))
                             .flex_none()
                             .cursor_pointer()
-                            .rounded(px(8.))
                             .hover(|style| style.opacity(0.86))
                             .active(|style| style.opacity(0.72))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1744,28 +1783,213 @@ impl Shell {
                             }))
                             .flex()
                             .flex_col()
-                            .gap(px(6.))
-                            .child(Cover::new(
-                                cover
-                                    .map(gpui_kit::ImageSource::from)
-                                    .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
-                                CoverSize::Square(142.),
-                                7.,
-                            ))
+                            .child(
+                                Cover::new(
+                                    cover
+                                        .map(gpui_kit::ImageSource::from)
+                                        .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
+                                    CoverSize::Square(cover_side),
+                                    ui::metrics::radius::COVER,
+                                )
+                                .elevation(Elevation::CoverShelf),
+                            )
                             .child(
                                 div()
-                                    .mt(px(4.))
-                                    .font_family("Literata")
-                                    .text_size(px(15.))
+                                    .mt(px(10.))
+                                    .truncate()
+                                    .type_style(ui::text::CAPTION_MEDIUM)
                                     .child(name),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.))
+                                    .mt(px(2.))
+                                    .truncate()
+                                    .type_style(ui::text::FOOTNOTE)
                                     .text_color(theme.colors.ink_secondary)
                                     .child(detail),
                             )
                     })),
+            )
+            .into_any_element()
+    }
+
+    /// The resume action for a book: open the player when it is playing, play
+    /// when it is on this Mac, otherwise download it.
+    fn resume_action(
+        &self,
+        id: &str,
+        account_key: &str,
+        item: &audible::models::LibraryItem,
+        primary: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let variant = if primary {
+            ButtonVariant::Primary
+        } else {
+            ButtonVariant::Secondary
+        };
+        let asin = item.asin.clone();
+        let key = account_key.to_string();
+        let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
+        let muted = cx.theme().colors.ink_secondary;
+        if self
+            .download
+            .as_ref()
+            .is_some_and(|download| download.asin == asin)
+        {
+            return div()
+                .type_style(ui::text::BODY)
+                .text_color(muted)
+                .child("Downloading…")
+                .into_any_element();
+        }
+        if self
+            .player
+            .as_ref()
+            .is_some_and(|player| player.asin == asin)
+        {
+            return Button::new(format!("{id}-player"))
+                .label("Now playing")
+                .icon(Icon::Play)
+                .variant(variant)
+                .on_click(cx.listener(|this, _, _, cx| this.open_player(cx)))
+                .into_any_element();
+        }
+        if backend::downloaded_path(&key, &asin).is_some() {
+            return Button::new(format!("{id}-resume"))
+                .label("Resume")
+                .icon(Icon::Play)
+                .variant(variant)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.start_player(key.clone(), asin.clone(), title.clone(), cx)
+                }))
+                .into_any_element();
+        }
+        if self.download.is_some() {
+            return IconButton::new(format!("{id}-download"), Icon::Download, 16.)
+                .hit_area(30.)
+                .tooltip("Another download is in progress")
+                .into_any_element();
+        }
+        Button::new(format!("{id}-download"))
+            .label("Download")
+            .icon(Icon::Download)
+            .variant(variant)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.download(key.clone(), asin.clone(), title.clone(), cx)
+            }))
+            .into_any_element()
+    }
+
+    /// One "In progress" row: cover, title, credit and progress bar, then the
+    /// percentage in pixel type, time left, and the resume action.
+    fn progress_row(
+        &self,
+        index: usize,
+        account_key: &str,
+        item: &audible::models::LibraryItem,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let asin = item.asin.clone();
+        let open_asin = asin.clone();
+        let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
+        let narrator = item.narrator_names();
+        let credit = if narrator.is_empty() {
+            item.author_names()
+        } else {
+            format!("{}, read by {narrator}", item.author_names())
+        };
+        let percent = book_progress(item).unwrap_or(0.);
+        let left = item
+            .listening_status
+            .as_ref()
+            .and_then(|status| status.time_remaining_seconds)
+            .map(|seconds| model::format::time_left(std::time::Duration::from_secs(seconds)));
+        let cover = self.covers.get(&asin).cloned();
+        div()
+            .flex()
+            .items_center()
+            .gap(px(24.))
+            .py(px(16.))
+            .border_b_1()
+            .border_color(theme.colors.hairline)
+            .child(
+                div()
+                    .id(format!("progress-open-{asin}"))
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(20.))
+                    .cursor_pointer()
+                    .active(|style| style.opacity(0.8))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.open_book(open_asin.clone(), cx)),
+                    )
+                    .child(
+                        Cover::new(
+                            cover
+                                .map(gpui_kit::ImageSource::from)
+                                .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
+                            CoverSize::Square(88.),
+                            ui::metrics::radius::COVER,
+                        )
+                        .elevation(Elevation::Cover),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .max_w(px(420.))
+                            .flex()
+                            .flex_col()
+                            .child(div().truncate().type_style(ui::text::BOOK_ROW).child(title))
+                            .child(
+                                div()
+                                    .mt(px(3.))
+                                    .truncate()
+                                    .type_style(ui::text::BODY)
+                                    .text_color(theme.colors.ink_secondary)
+                                    .child(credit),
+                            )
+                            .child(div().mt(px(14.)).child(SegmentedProgress::new(
+                                0.,
+                                (percent / 100.) as f32,
+                                0.,
+                            ))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .type_style(ui::text::PIXEL_STAT)
+                            .child(model::format::percent(percent.round() as u32)),
+                    )
+                    .children(left.map(|left| {
+                        div()
+                            .type_style(ui::text::CAPTION)
+                            .text_color(theme.colors.ink_secondary)
+                            .child(left)
+                    })),
+            )
+            .child(
+                div()
+                    .w(px(120.))
+                    .flex()
+                    .justify_end()
+                    .child(self.resume_action(
+                        &format!("progress-{asin}"),
+                        account_key,
+                        item,
+                        index == 0,
+                        cx,
+                    )),
             )
             .into_any_element()
     }
@@ -1775,6 +1999,8 @@ impl Shell {
             return self.settings_view(cx);
         }
         let color = cx.theme().colors.ink_secondary;
+        let theme_ink = cx.theme().colors.ink;
+        let theme_fill = cx.theme().colors.fill;
         let hairline = cx.theme().colors.hairline;
         let hover_fill = cx.theme().colors.fill;
         let heading = |title: &'static str| {
@@ -1836,46 +2062,55 @@ impl Shell {
                                     .child(div().font_family("Literata").text_size(px(18.)).child(title))
                                     .child(div().text_size(px(12.)).text_color(color).child(time)))
                                 .child(if downloaded {
-                                    Button::new(format!("bookmark-play-{asin}-{position}")).label("Play from here").icon(Icon::Play).on_click(cx.listener(move |this, _, _, cx| this.start_player_at(key.clone(), play_asin.clone(), play_title.clone(), Some(bookmark_position), cx)))
+                                    IconButton::new(format!("bookmark-play-{asin}-{position}"), Icon::Play, 16.).hit_area(30.).color(theme_ink).hover_fill(theme_fill).tooltip("Play from here").on_click(cx.listener(move |this, _, _, cx| this.start_player_at(key.clone(), play_asin.clone(), play_title.clone(), Some(bookmark_position), cx)))
                                 } else {
-                                    Button::new(format!("bookmark-book-{asin}-{position}")).label("Open book").on_click(cx.listener(move |this, _, _, cx| this.open_book(play_asin.clone(), cx)))
+                                    IconButton::new(format!("bookmark-book-{asin}-{position}"), Icon::ChevronRight, 16.).hit_area(30.).hover_fill(theme_fill).tooltip("Open book").on_click(cx.listener(move |this, _, _, cx| this.open_book(play_asin.clone(), cx)))
                                 })
-                                .child(Button::new(format!("bookmark-remove-{asin}-{position}")).label("Remove").on_click(cx.listener(move |this, _, _, cx| this.change_bookmark(remove_asin.clone(), bookmark_position, false, cx)))))
+                                .child(IconButton::new(format!("bookmark-remove-{asin}-{position}"), Icon::Delete, 16.).hit_area(30.).hover_fill(theme_fill).tooltip("Remove bookmark").on_click(cx.listener(move |this, _, _, cx| this.change_bookmark(remove_asin.clone(), bookmark_position, false, cx)))))
                         })).into_any_element();
                 }
                 if self.page == Page::Library && !library.items.is_empty() {
                     let listening: Vec<_> = library.items.iter().filter(|item| book_progress(item).unwrap_or(0.) > 0. && !book_finished(item)).collect();
                     let recent: Vec<_> = library.items.iter().take(8).collect();
-                    let mut view = div().flex().flex_col().gap(px(32.));
+                    let mut view = div().flex().flex_col().gap(px(40.));
                     if let Some(item) = listening.first() {
-                        let asin = item.asin.clone();
-                        let details_asin = asin.clone();
-                        let key = library.account_key.clone();
+                        let details_asin = item.asin.clone();
+                        let chapters_asin = item.asin.clone();
                         let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
-                        let author = item.author_names();
-                        let cover = self.covers.get(&asin).cloned();
-                        let downloaded = backend::downloaded_path(&key, &asin).is_some();
-                        let active_download = self.download.as_ref().is_some_and(|download| download.asin == asin);
-                        let current = self.player.as_ref().is_some_and(|player| player.asin == asin);
-                        let action = if active_download { div().text_size(px(13.)).text_color(color).child("Download in progress").into_any_element() }
-                        else if current { Button::new("hero-player").label("Open player").icon(Icon::Play).variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.open_player(cx))).into_any_element() }
-                        else if downloaded { let book_title = title.clone(); Button::new("hero-resume").label("Resume").icon(Icon::Play).variant(ButtonVariant::Primary).on_click(cx.listener(move |this, _, _, cx| this.start_player(key.clone(), asin.clone(), book_title.clone(), cx))).into_any_element() }
-                        else if self.download.is_some() { div().text_size(px(13.)).text_color(color).child("Another download is in progress").into_any_element() }
-                        else { let book_title = title.clone(); Button::new("hero-download").label("Download").icon(Icon::Download).variant(ButtonVariant::Primary).on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), book_title.clone(), cx))).into_any_element() };
-                        view = view.child(div().flex().items_center().gap(px(32.))
-                            .child(div().id("hero-book").cursor_pointer().hover(|style| style.opacity(0.86)).active(|style| style.opacity(0.72))
+                        let narrator = item.narrator_names();
+                        let credit = if narrator.is_empty() { item.author_names() } else { format!("{}, read by {narrator}", item.author_names()) };
+                        let cover = self.covers.get(&item.asin).cloned();
+                        let sentence = item.listening_status.as_ref().and_then(|status| status.time_remaining_seconds)
+                            .map(|seconds| format!("{}.", model::format::book_left_long(std::time::Duration::from_secs(seconds))))
+                            .or_else(|| book_progress(item).map(|percent| format!("{percent:.0}% of the way through.")));
+                        view = view.child(div().flex().items_center().gap(px(36.))
+                            .child(div().id("hero-book").cursor_pointer().active(|style| style.opacity(0.86))
                                 .on_click(cx.listener(move |this, _, _, cx| this.open_book(details_asin.clone(), cx)))
-                                .child(Cover::new(cover.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(200.), 7.).elevation(Elevation::CoverHero)))
-                            .child(div().flex().flex_col().gap(px(12.))
-                                .child(div().text_size(px(12.)).text_color(color).child("Continue listening"))
-                                .child(div().font_family("Literata").text_size(px(36.)).child(title))
-                                .child(div().text_size(px(14.)).text_color(color).child(author))
-                                .children(book_progress(item).map(|percent| div().font_family("Literata").text_size(px(17.)).child(format!("{percent:.0}% complete"))))
-                                .child(div().flex().child(action))));
-                        view = view.child(self.shelf("Still listening", "listening", &listening.iter().take(6).copied().collect::<Vec<_>>(), Page::Progress, cx));
+                                .child(Cover::new(cover.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(220.), ui::metrics::radius::COVER_LARGE).elevation(Elevation::CoverHero)))
+                            .child(div().flex_1().min_w_0().flex().flex_col()
+                                .child(div().type_style(ui::text::CAPTION).text_color(color).child("Continue listening"))
+                                .child(div().mt(px(8.)).type_style(ui::text::BOOK_DISPLAY).child(title))
+                                .child(div().mt(px(8.)).type_style(ui::text::CALLOUT).text_color(color).child(credit))
+                                .children(sentence.map(|sentence| div().mt(px(18.)).type_style(ui::text::BOOK_SENTENCE).child(sentence)))
+                                .child(div().mt(px(20.)).flex().items_center().gap(px(10.))
+                                    .child(self.resume_action("hero", &library.account_key, item, true, cx))
+                                    .child(Button::new("hero-details").label("Details").on_click(cx.listener(move |this, _, _, cx| this.open_book(chapters_asin.clone(), cx)))))));
+                        view = view.child(self.shelf("Still listening", "listening", &listening.iter().skip(1).take(6).copied().collect::<Vec<_>>(), 160., Page::Progress, cx));
                     }
-                    view = view.child(self.shelf("Recently added", "recent", &recent, Page::AllBooks, cx));
+                    view = view.child(self.shelf("Added recently", "recent", &recent, 118., Page::AllBooks, cx));
                     return view.into_any_element();
+                }
+                if self.page == Page::Progress {
+                    let items: Vec<_> = library.items.iter().filter(|item| book_progress(item).unwrap_or(0.) > 0. && !book_finished(item)).collect();
+                    if !items.is_empty() {
+                        let remaining: u64 = items.iter().filter_map(|item| item.listening_status.as_ref().and_then(|status| status.time_remaining_seconds)).sum();
+                        let key = library.account_key.clone();
+                        return div().flex().flex_col()
+                            .child(div().pb(px(12.)).border_b_1().border_color(hairline).type_style(ui::text::BODY).text_color(color)
+                                .child(model::format::library_summary(items.len(), std::time::Duration::from_secs(remaining))))
+                            .children(items.iter().enumerate().map(|(index, item)| self.progress_row(index, &key, item, cx)))
+                            .into_any_element();
+                    }
                 }
                 if self.page == Page::CatalogBook {
                     let Some(item) = &self.selected_catalog_book else { return base().child(heading("Book not found")).into_any_element() };
@@ -1885,7 +2120,7 @@ impl Shell {
                     let cover = self.covers.get(&item.asin).cloned();
                     let url = Marketplace::ALL.iter().find(|market| market.display_name() == library.marketplace).map(|market| format!("https://www.audible.{}/pd/{}", market.domain(), item.asin));
                     return div().flex().flex_col().gap(px(28.))
-                        .child(div().flex().child(Button::new("catalog-book-back").label("Back to Explore").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| this.back(cx)))))
+                        .child(div().flex().child(BackLink::new("catalog-book-back", self.back_label()).on_click(cx.listener(|this, _, _, cx| this.back(cx)))))
                         .child(div().flex().flex_wrap().items_start().gap(px(32.))
                             .child(Cover::new(cover.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(220.), 7.))
                             .child(div().flex().flex_col().gap(px(12.)).max_w(px(600.))
@@ -1898,7 +2133,7 @@ impl Shell {
                 }
                 if self.page == Page::Book {
                     let Some(item) = self.selected_book.as_ref().and_then(|asin| library.items.iter().find(|item| &item.asin == asin)) else {
-                        return base().child(heading("Book not found")).child(Button::new("book-back-missing").label("Back to library").on_click(cx.listener(|this, _, _, cx| this.back(cx)))).into_any_element();
+                        return base().child(heading("Book not found")).child(BackLink::new("book-back-missing", "Library").on_click(cx.listener(|this, _, _, cx| this.back(cx)))).into_any_element();
                     };
                     let asin = item.asin.clone();
                     let key = library.account_key.clone();
@@ -1923,7 +2158,7 @@ impl Shell {
                         Button::new("book-download").label("Download to this Mac").icon(Icon::Download).variant(ButtonVariant::Primary).on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), book_title.clone(), cx))).into_any_element()
                     };
                     return div().flex().flex_col().gap(px(28.))
-                        .child(div().flex().child(Button::new("book-back").label("Back").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| this.back(cx)))))
+                        .child(div().flex().child(BackLink::new("book-back", self.back_label()).on_click(cx.listener(|this, _, _, cx| this.back(cx)))))
                         .child(div().flex().flex_wrap().items_start().gap(px(32.))
                             .child(Cover::new(cover.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(220.), 7.))
                             .child(div().flex().flex_col().gap(px(12.)).max_w(px(600.))
@@ -1935,13 +2170,9 @@ impl Shell {
                         .into_any_element();
                 }
                 if self.page == Page::Explore {
-                    let mut view = div().flex().flex_col().gap(px(24.))
-                        .child(heading("Explore Audible"))
-                        .child(div().flex().child(Button::new("search-library-from-explore").label("Search my library").icon(Icon::Search).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Search; cx.notify(); }))))
-                        .child(div().flex().gap(px(12.)).child(div().flex_1().min_w_0().max_w(px(400.)).child(Input::new(&self.search)))
-                            .child(Button::new("search-catalog").label("Search").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.search_catalog(cx)))));
+                    let mut view = div().flex().flex_col().gap(px(36.));
                     if self.showing_search {
-                        view = view.child(div().flex().child(Button::new("explore-home").label("Back to Explore").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.showing_search = false; this.search_message = None; cx.notify(); }))))
+                        view = view.child(div().flex().child(BackLink::new("explore-home", "Explore").on_click(cx.listener(|this, _, _, cx| { this.showing_search = false; this.search_message = None; cx.notify(); }))))
                             .children(self.search_message.iter().map(|message| div().text_size(px(13.)).text_color(color).child(message.clone())))
                             .children(self.search_results.iter().map(|item| {
                                 let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
@@ -1960,39 +2191,39 @@ impl Shell {
                             let product = item.clone();
                             let palette = self.palettes.get(&item.asin).copied().unwrap_or_default();
                             let image = self.covers.get(&item.asin).cloned();
-                            view = view.child(div().rounded(px(16.)).p(px(24.)).flex().items_center().gap(px(24.)).elevation(Elevation::Banner(palette), cx.theme(), window)
-                                .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(140.), 7.).elevation(Elevation::CoverOnField))
-                                .child(div().flex().flex_col().gap(px(8.))
-                                    .child(div().text_size(px(12.)).text_color(palette.on_field_muted).child("New release"))
-                                    .child(div().font_family("Literata").text_size(px(28.)).text_color(palette.on_field).child(item.title.clone().unwrap_or_else(|| "Untitled".into())))
-                                    .child(div().text_size(px(13.)).text_color(palette.on_field_muted).child(item.author_names()))
-                                    .child(Button::new("featured-book").label("View book").variant(ButtonVariant::Light(palette)).on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx))))));
+                            view = view.child(div().rounded(px(ui::metrics::radius::FLOATING)).p(px(28.)).flex().items_center().gap(px(28.)).elevation(Elevation::Banner(palette), cx.theme(), window)
+                                .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(168.), ui::metrics::radius::COVER_LARGE).elevation(Elevation::CoverOnField))
+                                .child(div().flex_1().min_w_0().flex().flex_col()
+                                    .child(div().type_style(ui::text::CAPTION).text_color(palette.on_field_muted).child("New release"))
+                                    .child(div().mt(px(6.)).type_style(ui::text::BOOK_BANNER).text_color(palette.on_field).child(item.title.clone().unwrap_or_else(|| "Untitled".into())))
+                                    .child(div().mt(px(6.)).type_style(ui::text::CALLOUT).text_color(palette.on_field_muted).child(item.author_names()))
+                                    .child(div().mt(px(20.)).flex().child(Button::new("featured-book").label("View book").variant(ButtonVariant::Light(palette)).on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx)))))));
                         }
                         if !feed.genres.is_empty() {
-                            view = view.child(div().flex().flex_col().gap(px(12.))
-                                .child(div().text_size(px(19.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Browse by genre"))
-                                .child(div().flex().flex_wrap().gap(px(10.)).children(feed.genres.iter().take(6).enumerate().map(|(index, genre)| {
+                            view = view.child(div().flex().flex_col().gap(px(14.))
+                                .child(SectionHeader::new("genres-header", "Browse by genre"))
+                                .child(div().flex().gap(px(10.)).children(feed.genres.iter().take(6).enumerate().map(|(index, genre)| {
                                     let id = genre.id.clone(); let name = genre.name.clone(); let search_name = name.clone();
                                     let accent = ui::theme::Accent::resolve(ui::theme::AccentTheme::ALL[index % ui::theme::AccentTheme::ALL.len()], cx.theme().appearance, cx.theme().colors.window);
-                                    div().id(("genre", index)).cursor_pointer().w(px(170.)).min_h(px(58.)).px(px(14.)).py(px(10.)).flex().items_center().rounded(px(10.))
-                                        .bg(accent.tint).text_color(accent.on_tint).text_size(px(14.)).font_weight(gpui_kit::FontWeight::MEDIUM)
+                                    div().id(("genre", index)).cursor_pointer().flex_1().min_w_0().h(px(54.)).px(px(14.)).flex().items_center().rounded(px(ui::metrics::radius::TILE))
+                                        .bg(accent.tint).text_color(accent.on_tint).type_style(ui::text::BODY_MEDIUM)
                                         .hover(|style| style.opacity(0.84)).active(|style| style.opacity(0.72))
                                         .on_click(cx.listener(move |this, _, _, cx| this.browse_genre(id.clone(), search_name.clone(), cx)))
-                                        .child(div().w_full().min_w_0().overflow_hidden().child(name))
+                                        .child(div().w_full().min_w_0().truncate().child(name))
                                 }))));
                         }
                         if !feed.new_releases.is_empty() {
-                            view = view.child(div().flex().flex_col().gap(px(12.))
-                                .child(div().text_size(px(19.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child("New and noteworthy"))
+                            view = view.child(div().flex().flex_col().gap(px(14.))
+                                .child(SectionHeader::new("releases-header", "New and noteworthy"))
                                 .child(div().flex().flex_wrap().gap(px(20.)).children(feed.new_releases.iter().take(6).map(|item| {
                                     let product = item.clone(); let image = self.covers.get(&item.asin).cloned();
-                                    div().id(format!("release-{}", item.asin)).w(px(142.)).flex_none().cursor_pointer().rounded(px(8.))
-                                        .hover(|style| style.opacity(0.85)).active(|style| style.opacity(0.72))
+                                    div().id(format!("release-{}", item.asin)).w(px(160.)).flex_none().cursor_pointer()
+                                        .hover(|style| style.opacity(0.86)).active(|style| style.opacity(0.72))
                                         .on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx)))
-                                        .flex().flex_col().gap(px(6.))
-                                        .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(142.), 7.))
-                                        .child(div().mt(px(4.)).font_family("Literata").text_size(px(15.)).child(item.title.clone().unwrap_or_else(|| "Untitled".into())))
-                                        .child(div().text_size(px(12.)).text_color(color).child(item.author_names()))
+                                        .flex().flex_col()
+                                        .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(160.), ui::metrics::radius::COVER).elevation(Elevation::CoverShelf))
+                                        .child(div().mt(px(10.)).truncate().type_style(ui::text::CAPTION_MEDIUM).child(item.title.clone().unwrap_or_else(|| "Untitled".into())))
+                                        .child(div().mt(px(2.)).truncate().type_style(ui::text::FOOTNOTE).text_color(color).child(item.author_names()))
                                 }))));
                         }
                         if feed.warning.is_some() { view = view.child(Button::new("retry-explore").label("Try again").on_click(cx.listener(|this, _, _, cx| { this.explore_feed = None; this.load_explore(cx); cx.notify(); }))); }
@@ -2031,7 +2262,7 @@ impl Shell {
                 }
                 let query = self.library_search.read(cx).value().trim().to_lowercase();
                 if self.page == Page::Search && query.is_empty() {
-                    return base().child(div().flex().child(Button::new("search-to-explore").label("Explore Audible").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Explore; this.load_explore(cx); cx.notify(); })))).child(Input::new(&self.library_search)).child(copy("Search the books in your library.".into())).into_any_element();
+                    return base().child(copy("Search the books in your library.".into())).into_any_element();
                 }
                 let items: Vec<_> = library.items.iter().filter(|item| match self.page {
                     Page::Progress => book_progress(item).unwrap_or(0.) > 0. && !book_finished(item),
@@ -2044,18 +2275,14 @@ impl Shell {
                 }).collect();
                 if items.is_empty() {
                     return base()
-                        .children((self.page == Page::Search).then(|| div().flex().child(Button::new("empty-search-to-explore").label("Explore Audible").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Explore; this.load_explore(cx); cx.notify(); })))))
-                        .children((self.page == Page::Search).then(|| Input::new(&self.library_search)))
                         .child(heading(match self.page { Page::Progress => "Nothing in progress", Page::OnThisMac => "No downloads yet", Page::Search => "No matching books", Page::Finished => "No finished books", _ => "Your library is empty" }))
                         .child(copy(if self.page == Page::OnThisMac { "Download a title from your library to listen on this Mac.".into() } else if self.page == Page::Search { "Try a different title, author or narrator.".into() } else if library.offline { "Showing the library saved on this Mac.".into() } else { "Your Audible library has synced.".into() })).into_any_element();
                 }
                 div().flex().flex_col().gap(px(16.))
-                    .children((self.page == Page::Search).then(|| div().flex().child(Button::new("results-search-to-explore").label("Explore Audible").icon(Icon::ArrowLeft).on_click(cx.listener(|this, _, _, cx| { this.page = Page::Explore; this.load_explore(cx); cx.notify(); })))))
-                    .children((self.page == Page::Search).then(|| div().max_w(px(500.)).child(Input::new(&self.library_search))))
                     .children(matches!(self.page, Page::AuthorBooks | Page::SeriesBooks).then(|| {
                         let target = if self.page == Page::AuthorBooks { Page::Authors } else { Page::Series };
                         div().flex().items_center().gap(px(16.))
-                            .child(Button::new("browse-back").label("Back").icon(Icon::ArrowLeft).on_click(cx.listener(move |this, _, _, cx| { this.page = target; cx.notify(); })))
+                            .child(BackLink::new("browse-back", page_name(target)).on_click(cx.listener(move |this, _, _, cx| { this.page = target; cx.notify(); })))
                             .child(div().font_family("Literata").text_size(px(24.)).child(self.browse_name.clone().unwrap_or_default()))
                     }))
                     .child(div().text_size(px(13.)).text_color(color).child(format!("{} titles", items.len())))
@@ -2087,16 +2314,16 @@ impl Shell {
                                 div().text_size(px(13.)).text_color(color).child(format!("{stage}…")).into_any_element()
                             } else if downloaded {
                                 div().flex().items_center().gap(px(8.))
-                                    .child(Button::new(format!("reveal-{asin}")).label("Show in Finder").on_click(cx.listener(move |this, _, _, cx| {
+                                    .child(IconButton::new(format!("reveal-{asin}"), Icon::Folder, 16.).hit_area(30.).hover_fill(theme_fill).tooltip("Show in Finder").on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(path) = &local_path && let Err(error) = std::process::Command::new("open").arg("-R").arg(path).spawn() {
                                             this.download_notice = Some(format!("Could not open Finder: {error}")); cx.notify();
                                         }
                                     })))
-                                    .child(Button::new(button_id).label("Play").icon(Icon::Play).on_click(cx.listener(move |this, _, _, cx| this.start_player(key.clone(), asin.clone(), download_title.clone(), cx)))).into_any_element()
+                                    .child(IconButton::new(button_id, Icon::Play, 16.).hit_area(30.).color(theme_ink).hover_fill(theme_fill).tooltip("Play").on_click(cx.listener(move |this, _, _, cx| this.start_player(key.clone(), asin.clone(), download_title.clone(), cx)))).into_any_element()
                             } else if other_download {
                                 div().text_size(px(12.)).text_color(color).child("One download at a time").into_any_element()
                             } else {
-                                Button::new(button_id).label("Download").on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), download_title.clone(), cx))).into_any_element()
+                                IconButton::new(button_id, Icon::Download, 16.).hit_area(30.).color(theme_ink).hover_fill(theme_fill).tooltip("Download to this Mac").on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), download_title.clone(), cx))).into_any_element()
                             })
                     })).into_any_element()
             }
@@ -2133,37 +2360,40 @@ impl Render for Shell {
             ),
             _ => "Not connected".into(),
         };
-        let notice =
-            if matches!(self.account, Account::Ready(_)) {
-                self.download_notice.as_ref().map(|message| {
-                    div()
-                        .mx(px(36.))
-                        .mt(px(12.))
-                        .px(px(16.))
-                        .py(px(10.))
-                        .rounded(px(10.))
-                        .bg(theme.colors.fill)
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_size(px(13.))
-                                .text_color(theme.colors.ink)
-                                .child(message.clone()),
-                        )
-                        .child(Button::new("dismiss-status").label("Dismiss").on_click(
-                            cx.listener(|this, _, _, cx| {
+        let notice = if matches!(self.account, Account::Ready(_)) {
+            self.download_notice.as_ref().map(|message| {
+                div()
+                    .mx(px(36.))
+                    .mt(px(12.))
+                    .px(px(16.))
+                    .py(px(10.))
+                    .rounded(px(10.))
+                    .bg(theme.colors.fill)
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(13.))
+                            .text_color(theme.colors.ink)
+                            .child(message.clone()),
+                    )
+                    .child(
+                        IconButton::new("dismiss-status", Icon::Cancel, 14.)
+                            .hit_area(24.)
+                            .hover_fill(theme.colors.fill)
+                            .tooltip("Dismiss")
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.download_notice = None;
                                 cx.notify();
-                            }),
-                        ))
-                        .into_any_element()
-                })
-            } else {
-                None
-            };
+                            })),
+                    )
+                    .into_any_element()
+            })
+        } else {
+            None
+        };
         let download_panel = self.download.as_ref().map(|download| {
             let event = download
                 .event
@@ -2222,159 +2452,173 @@ impl Render for Shell {
                                         .child(detail),
                                 ),
                         )
-                        .child(Button::new("view-downloads").label("On this Mac").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.page = Page::OnThisMac;
-                                cx.notify();
-                            }),
-                        )),
+                        .child(
+                            IconButton::new("view-downloads", Icon::ChevronRight, 16.)
+                                .hit_area(28.)
+                                .hover_fill(theme.colors.fill)
+                                .tooltip("Show downloads")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.page = Page::OnThisMac;
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .child(track)
                 .into_any_element()
         });
-        let bar =
-            self.player.as_ref().map(|active| {
-                let compact_bar = f32::from(window.viewport_size().width) < 1050.;
-                let title = active.title.clone();
-                let image = self.covers.get(&active.asin).cloned();
-                let playing = active.player.is_playing();
-                let position = active.player.position().max(0.);
-                let duration = active.player.duration().max(0.);
-                let fraction = if duration > 0. {
-                    (position / duration).clamp(0., 1.) as f32
-                } else {
-                    0.
-                };
-                let elapsed = model::format::clock(std::time::Duration::from_secs(position as u64));
-                let remaining = model::format::countdown(std::time::Duration::from_secs(
-                    (duration - position).max(0.) as u64,
-                ));
-                let speed = active.player.rate();
-                let weak = cx.entity().downgrade();
-                let scrubber = Scrubber::new("bar-seek", fraction, ScrubberColors::window(cx))
-                    .on_seek(move |value, _, cx| {
-                        let _ = weak.update(cx, |this, cx| this.seek_fraction(value, cx));
-                    });
-                div()
-                    .mx(px(24.))
-                    .mb(px(20.))
-                    .h(px(76.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(if compact_bar { 8. } else { 16. }))
-                    .px(px(14.))
-                    .rounded(px(18.))
-                    .elevation(Elevation::FloatingPlayer, &theme, window)
-                    .child(
-                        div()
-                            .id("open-now-playing")
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.open_player(cx)))
-                            .w(px(if compact_bar { 165. } else { 260. }))
-                            .min_w_0()
-                            .flex()
-                            .items_center()
-                            .gap(px(12.))
-                            .child(
-                                Cover::new(
-                                    image
-                                        .map(gpui_kit::ImageSource::from)
-                                        .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
-                                    CoverSize::Square(48.),
-                                    6.,
+        let bar = self.player.as_ref().map(|active| {
+            let compact_bar = f32::from(window.viewport_size().width) < 1050.;
+            let title = active.title.clone();
+            let image = self.covers.get(&active.asin).cloned();
+            let playing = active.player.is_playing();
+            let position = active.player.position().max(0.);
+            let duration = active.player.duration().max(0.);
+            let fraction = if duration > 0. {
+                (position / duration).clamp(0., 1.) as f32
+            } else {
+                0.
+            };
+            let elapsed = model::format::clock(std::time::Duration::from_secs(position as u64));
+            let remaining = model::format::countdown(std::time::Duration::from_secs(
+                (duration - position).max(0.) as u64,
+            ));
+            let speed = active.player.rate();
+            let weak = cx.entity().downgrade();
+            let scrubber = Scrubber::new("bar-seek", fraction, ScrubberColors::window(cx)).on_seek(
+                move |value, _, cx| {
+                    let _ = weak.update(cx, |this, cx| this.seek_fraction(value, cx));
+                },
+            );
+            div()
+                .mx(px(24.))
+                .mb(px(20.))
+                .h(px(76.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(if compact_bar { 8. } else { 16. }))
+                .px(px(14.))
+                .rounded(px(18.))
+                .elevation(Elevation::FloatingPlayer, &theme, window)
+                .child(
+                    div()
+                        .id("open-now-playing")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| this.open_player(cx)))
+                        .w(px(if compact_bar { 165. } else { 260. }))
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(
+                            Cover::new(
+                                image
+                                    .map(gpui_kit::ImageSource::from)
+                                    .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
+                                CoverSize::Square(48.),
+                                6.,
+                            )
+                            .elevation(Elevation::CoverThumb),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.))
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .text_size(px(13.))
+                                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                        .child(title),
                                 )
-                                .elevation(Elevation::CoverThumb),
-                            )
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(3.))
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_size(px(13.))
-                                            .font_weight(gpui_kit::FontWeight::MEDIUM)
-                                            .child(title),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(theme.colors.ink_secondary)
-                                            .child("Open player"),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(if compact_bar { 8. } else { 20. }))
-                                    .child(Button::new("back-30").icon(Icon::Back30).on_click(
-                                        cx.listener(|this, _, _, cx| this.skip(-30., cx)),
-                                    ))
-                                    .child(
-                                        Button::new("toggle-play")
-                                            .icon(if playing { Icon::Pause } else { Icon::Play })
-                                            .variant(ButtonVariant::Ink)
-                                            .shape(ButtonShape::Circle {
-                                                diameter: 36.,
-                                                icon: 16.,
-                                            })
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.toggle_playback(cx)
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("forward-30").icon(Icon::Forward30).on_click(
-                                            cx.listener(|this, _, _, cx| this.skip(30., cx)),
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.colors.ink_secondary)
+                                        .child("Open player"),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(if compact_bar { 8. } else { 20. }))
+                                .child(
+                                    IconButton::new("back-30", Icon::Back30, 22.)
+                                        .hit_area(30.)
+                                        .color(theme.colors.ink)
+                                        .tooltip("Back 30 seconds")
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.skip(-30., cx)),
                                         ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(500.))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(10.))
-                                            .text_color(theme.colors.ink_secondary)
-                                            .child(elapsed),
-                                    )
-                                    .child(div().flex_1().child(scrubber))
-                                    .child(
-                                        div()
-                                            .text_size(px(10.))
-                                            .text_color(theme.colors.ink_secondary)
-                                            .child(remaining),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        Button::new("bar-speed")
-                            .label(format!("{speed}×"))
-                            .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
-                    )
-                    .children((!compact_bar).then(|| {
-                        Button::new("bar-mini")
-                            .label("Mini player")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx)))
-                    }))
-                    .into_any_element()
-            });
+                                )
+                                .child(
+                                    Button::new("toggle-play")
+                                        .icon(if playing { Icon::Pause } else { Icon::Play })
+                                        .variant(ButtonVariant::Ink)
+                                        .shape(ButtonShape::Circle {
+                                            diameter: 36.,
+                                            icon: 16.,
+                                        })
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.toggle_playback(cx)),
+                                        ),
+                                )
+                                .child(
+                                    IconButton::new("forward-30", Icon::Forward30, 22.)
+                                        .hit_area(30.)
+                                        .color(theme.colors.ink)
+                                        .tooltip("Forward 30 seconds")
+                                        .on_click(cx.listener(|this, _, _, cx| this.skip(30., cx))),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(500.))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .text_color(theme.colors.ink_secondary)
+                                        .child(elapsed),
+                                )
+                                .child(div().flex_1().child(scrubber))
+                                .child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .text_color(theme.colors.ink_secondary)
+                                        .child(remaining),
+                                ),
+                        ),
+                )
+                .child(
+                    Chip::new("bar-speed")
+                        .label(model::format::speed(speed))
+                        .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
+                )
+                .children((!compact_bar).then(|| {
+                    IconButton::new("bar-mini", Icon::Pip, 17.)
+                        .hit_area(28.)
+                        .hover_fill(theme.colors.fill)
+                        .tooltip("Open mini player")
+                        .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx)))
+                }))
+                .into_any_element()
+        });
         let content = div().w_full().child(self.account_view(window, cx));
         let content = if matches!(self.page, Page::Book | Page::CatalogBook) && !cx.reduce_motion()
         {
@@ -2392,6 +2636,14 @@ impl Render for Shell {
         div()
             .size_full()
             .flex()
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                let input = if matches!(this.page, Page::Explore | Page::CatalogBook) {
+                    &this.search
+                } else {
+                    &this.library_search
+                };
+                window.focus(&gpui_kit::Focusable::focus_handle(input, cx), cx);
+            }))
             .bg(theme.colors.window)
             .text_color(theme.colors.ink)
             .font_family("Geist")
@@ -2437,7 +2689,13 @@ impl Render for Shell {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(Toolbar::new(title))
+                    .child(Toolbar::new(title).trailing(
+                        if matches!(self.page, Page::Explore | Page::CatalogBook) {
+                            SearchField::new(&self.search, "⌘F")
+                        } else {
+                            SearchField::new(&self.library_search, "⌘F")
+                        },
+                    ))
                     .children(download_panel)
                     .children(notice)
                     .child(
@@ -2496,9 +2754,18 @@ fn smoke_open_mini(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App)
     }
 }
 
+gpui_kit::actions!(
+    better_audible,
+    [
+        /// Focuses the toolbar search field (⌘F).
+        FocusSearch
+    ]
+);
+
 fn main() {
     gpui_kit::application().with_assets(ui::Assets).run(|cx| {
         gpui_kit::init(cx);
+        cx.bind_keys([gpui_kit::KeyBinding::new("cmd-f", FocusSearch, None)]);
         if let Err(error) = ui::init(backend::load_appearance(), cx) {
             eprintln!("Could not initialize the interface: {error:#}");
             cx.quit();

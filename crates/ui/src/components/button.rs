@@ -8,6 +8,8 @@ use gpui_kit::{
     relative,
 };
 
+use gpui_kit::component::tooltip::Tooltip;
+
 use crate::elevation::{Elevation, ElevationExt};
 use crate::icon::{Icon, icon};
 use crate::metrics::{radius, size};
@@ -239,12 +241,18 @@ impl RenderOnce for Button {
 }
 
 /// A bare glyph button (transport skips, utilities): no chrome, pressed dims.
+///
+/// Icon-only actions are the default for secondary commands; give every one a
+/// [`IconButton::tooltip`] so the glyph is named on hover and to assistive tech.
 #[derive(IntoElement)]
 pub struct IconButton {
     id: ElementId,
     icon: Icon,
     size: f32,
+    hit: Option<f32>,
     color: Option<Hsla>,
+    hover_fill: Option<Hsla>,
+    tooltip: Option<SharedString>,
     on_click: Option<ClickHandler>,
 }
 
@@ -255,9 +263,30 @@ impl IconButton {
             id: id.into(),
             icon,
             size,
+            hit: None,
             color: None,
+            hover_fill: None,
+            tooltip: None,
             on_click: None,
         }
+    }
+
+    /// Square hit target around the glyph, in points (defaults to the glyph size).
+    pub fn hit_area(mut self, side: f32) -> Self {
+        self.hit = Some(side);
+        self
+    }
+
+    /// Rounded fill shown behind the glyph on hover.
+    pub fn hover_fill(mut self, fill: Hsla) -> Self {
+        self.hover_fill = Some(fill);
+        self
+    }
+
+    /// Names the action on hover.
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
+        self
     }
 
     /// Glyph colour; defaults to secondary ink.
@@ -279,18 +308,90 @@ impl IconButton {
 impl RenderOnce for IconButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = self.color.unwrap_or(cx.theme().colors.ink_secondary);
+        let hover_fill = self.hover_fill;
         div()
             .id(self.id)
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .size(px(self.size))
+            .size(px(self.hit.unwrap_or(self.size).max(self.size)))
+            .rounded(px(radius::POPUP))
             .active(|style| style.opacity(PRESSED_OPACITY))
             .child(icon(self.icon).size(px(self.size)).text_color(color))
+            .when_some(self.tooltip, |el, text| {
+                el.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+            })
             .when_some(self.on_click, |el, handler| {
                 el.cursor_pointer()
-                    .hover(|style| style.opacity(0.86))
+                    .hover(move |style| match hover_fill {
+                        Some(fill) => style.bg(fill),
+                        None => style.opacity(0.86),
+                    })
+                    .on_click(move |e, w, cx| handler(e, w, cx))
+            })
+    }
+}
+
+/// A quiet navigation link: chevron plus label, no chrome ("‹ Library").
+#[derive(IntoElement)]
+pub struct BackLink {
+    id: ElementId,
+    label: SharedString,
+    color: Option<Hsla>,
+    on_click: Option<ClickHandler>,
+}
+
+impl BackLink {
+    /// A back link reading `label` (the destination, not "Back").
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            color: None,
+            on_click: None,
+        }
+    }
+
+    /// Text and glyph colour; defaults to secondary ink.
+    pub fn color(mut self, color: Hsla) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Sets the click handler.
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Rc::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for BackLink {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let color = self.color.unwrap_or(cx.theme().colors.ink_secondary);
+        div()
+            .id(self.id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.))
+            .h(px(size::POPUP))
+            .text_color(color)
+            .type_style(text::BODY)
+            .active(|style| style.opacity(PRESSED_OPACITY))
+            .child(
+                icon(Icon::ArrowLeft)
+                    .flex_none()
+                    .size(px(16.))
+                    .text_color(color),
+            )
+            .child(self.label)
+            .when_some(self.on_click, |el, handler| {
+                el.cursor_pointer()
+                    .hover(|style| style.opacity(0.72))
                     .on_click(move |e, w, cx| handler(e, w, cx))
             })
     }

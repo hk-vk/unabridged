@@ -98,6 +98,18 @@ icons! {
     Cancel => "cancel",
     /// Settings (`settings-01`).
     Settings => "settings",
+    /// Mini player (`picture-in-picture-on`).
+    Pip => "pip",
+    /// Show in Finder (`folder-open`).
+    Folder => "folder",
+    /// Remove (`delete-02`).
+    Delete => "delete",
+    /// Try again (`refresh-01`).
+    Refresh => "refresh",
+    /// Open on the web (`link-square-02`).
+    External => "external",
+    /// Disclosure (`arrow-right-01`).
+    ChevronRight => "chevron-right",
 }
 
 /// An SVG element drawing `icon`. Give it a size and a `text_color`.

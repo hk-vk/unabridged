@@ -102,9 +102,11 @@ impl Render for MiniPlayer {
                                             .child(title),
                                     )
                                     .child(
-                                        Button::new("mini-expand")
-                                            .icon(Icon::Expand)
-                                            .variant(ButtonVariant::Glass(palette))
+                                        IconButton::new("mini-expand", Icon::Expand, 15.)
+                                            .hit_area(26.)
+                                            .color(palette.on_field_muted)
+                                            .hover_fill(palette.on_field_track)
+                                            .tooltip("Open full player")
                                             .on_click(move |_, _, cx| {
                                                 open_shell.update(cx, |shell, cx| {
                                                     shell.show_main_player(cx)
@@ -126,22 +128,22 @@ impl Render for MiniPlayer {
                                     .justify_between()
                                     .gap(px(5.))
                                     .child(
-                                        Button::new("mini-speed")
-                                            .label(format!("{speed}×"))
-                                            .variant(ButtonVariant::Glass(palette))
+                                        Chip::new("mini-speed")
+                                            .label(model::format::speed(speed))
+                                            .style(ChipStyle::Outline {
+                                                outline: palette.on_field_track,
+                                                content: palette.on_field,
+                                            })
                                             .on_click(move |_, _, cx| {
                                                 speed_shell
                                                     .update(cx, |shell, cx| shell.cycle_speed(cx))
                                             }),
                                     )
                                     .child(
-                                        Button::new("mini-back")
-                                            .icon(Icon::Back30)
-                                            .variant(ButtonVariant::Glass(palette))
-                                            .shape(ButtonShape::Circle {
-                                                diameter: 30.,
-                                                icon: 16.,
-                                            })
+                                        IconButton::new("mini-back", Icon::Back30, 20.)
+                                            .hit_area(28.)
+                                            .color(palette.on_field)
+                                            .tooltip("Back 30 seconds")
                                             .on_click(move |_, _, cx| {
                                                 back_shell
                                                     .update(cx, |shell, cx| shell.skip(-30., cx))
@@ -162,13 +164,10 @@ impl Render for MiniPlayer {
                                             }),
                                     )
                                     .child(
-                                        Button::new("mini-forward")
-                                            .icon(Icon::Forward30)
-                                            .variant(ButtonVariant::Glass(palette))
-                                            .shape(ButtonShape::Circle {
-                                                diameter: 30.,
-                                                icon: 16.,
-                                            })
+                                        IconButton::new("mini-forward", Icon::Forward30, 20.)
+                                            .hit_area(28.)
+                                            .color(palette.on_field)
+                                            .tooltip("Forward 30 seconds")
                                             .on_click(move |_, _, cx| {
                                                 forward_shell
                                                     .update(cx, |shell, cx| shell.skip(30., cx))

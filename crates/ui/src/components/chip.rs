@@ -34,6 +34,13 @@ pub enum ChipStyle {
     Raised,
     /// Flat chip on the subtle fill (toolbar sort popup).
     Filled,
+    /// Flat tinted chip, such as a toggle on a book field: `fill` behind `content`.
+    Tint {
+        /// Background colour.
+        fill: Hsla,
+        /// Text and glyph colour.
+        content: Hsla,
+    },
     /// Outlined pill on a book field: `outline` stroke, `content` text.
     Outline {
         /// Stroke colour.
@@ -146,6 +153,15 @@ impl RenderOnce for Chip {
                 icon_size::XSMALL,
                 text::CAPTION,
             ),
+            ChipStyle::Tint { fill, content } => (
+                base.rounded(px(radius::POPUP))
+                    .px(px(RAISED_PADDING))
+                    .gap(px(GAP))
+                    .bg(fill),
+                content,
+                icon_size::MEDIUM,
+                text::CAPTION_MEDIUM,
+            ),
             ChipStyle::Outline { outline, content } => (
                 base.rounded_full()
                     .px(px(OUTLINE_PADDING))
@@ -170,7 +186,9 @@ impl RenderOnce for Chip {
             })
             .when_some(self.label, |el, label| el.child(label))
             .when_some(self.on_click, |el, handler| {
-                el.on_click(move |e, w, cx| handler(e, w, cx))
+                el.cursor_pointer()
+                    .hover(|style| style.opacity(0.86))
+                    .on_click(move |e, w, cx| handler(e, w, cx))
             })
     }
 }
