@@ -321,3 +321,25 @@ mod tests {
         assert!(save_position(&"a".repeat(64), &asin, 1200, old).is_ok());
     }
 }
+
+pub fn chapters(key: &str, asin: &audible::Asin) -> anyhow::Result<audible::models::ChapterInfo> {
+    let path = account_directory(key)?
+        .join("Chapters")
+        .join(format!("{asin}.json"));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let _guard = rt.enter();
+    let client = Audible::from_store(store()?, PROFILE)?
+        .ok_or_else(|| anyhow::anyhow!("Sign in to load chapters"))?;
+    match rt.block_on(client.chapters(asin)) {
+        Ok(chapters) => {
+            let _ = write_json(&path, &chapters);
+            Ok(chapters)
+        }
+        Err(error) => std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .ok_or_else(|| error.into()),
+    }
+}

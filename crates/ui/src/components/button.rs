@@ -231,7 +231,9 @@ impl RenderOnce for Button {
                 el.child(div().line_height(relative(1.0)).child(label))
             })
             .when_some(self.on_click, |el, handler| {
-                el.on_click(move |e, w, cx| handler(e, w, cx))
+                el.cursor_pointer()
+                    .hover(|style| style.opacity(0.86))
+                    .on_click(move |e, w, cx| handler(e, w, cx))
             })
     }
 }
@@ -287,7 +289,9 @@ impl RenderOnce for IconButton {
             .active(|style| style.opacity(PRESSED_OPACITY))
             .child(icon(self.icon).size(px(self.size)).text_color(color))
             .when_some(self.on_click, |el, handler| {
-                el.on_click(move |e, w, cx| handler(e, w, cx))
+                el.cursor_pointer()
+                    .hover(|style| style.opacity(0.86))
+                    .on_click(move |e, w, cx| handler(e, w, cx))
             })
     }
 }

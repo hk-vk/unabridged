@@ -17,6 +17,8 @@ mod platform {
         fn ba_player_duration(player: *mut c_void) -> f64;
         fn ba_player_seek(player: *mut c_void, time: f64);
         fn ba_player_is_playing(player: *mut c_void) -> bool;
+        fn ba_player_rate(player: *mut c_void) -> f32;
+        fn ba_player_set_rate(player: *mut c_void, rate: f32);
     }
     pub struct Player(NonNull<c_void>);
     impl Player {
@@ -50,6 +52,12 @@ mod platform {
         pub fn is_playing(&self) -> bool {
             unsafe { ba_player_is_playing(self.0.as_ptr()) }
         }
+        pub fn rate(&self) -> f32 {
+            unsafe { ba_player_rate(self.0.as_ptr()) }
+        }
+        pub fn set_rate(&self, rate: f32) {
+            unsafe { ba_player_set_rate(self.0.as_ptr(), rate.clamp(0.5, 2.0)) }
+        }
     }
     impl Drop for Player {
         fn drop(&mut self) {
@@ -81,6 +89,10 @@ impl Player {
     pub fn is_playing(&self) -> bool {
         false
     }
+    pub fn rate(&self) -> f32 {
+        1.0
+    }
+    pub fn set_rate(&self, _rate: f32) {}
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -149,6 +161,8 @@ mod tests {
         assert!((player.duration() - 1.).abs() < 0.05);
         player.seek(0.5);
         assert!((player.position() - 0.5).abs() < 0.05);
+        player.set_rate(1.25);
+        assert!((player.rate() - 1.25).abs() < 0.01);
         drop(player);
         std::fs::remove_file(path).unwrap();
     }

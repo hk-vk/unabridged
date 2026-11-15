@@ -95,7 +95,9 @@ impl RenderOnce for SidebarItem {
                     .child(self.label),
             )
             .when_some(self.on_click, |el, handler| {
-                el.on_click(move |e, w, cx| handler(e, w, cx))
+                el.cursor_pointer()
+                    .hover(|style| style.opacity(0.86))
+                    .on_click(move |e, w, cx| handler(e, w, cx))
             })
     }
 }

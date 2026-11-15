@@ -21,3 +21,6 @@ double ba_player_position(void *handle) { return handle ? [(__bridge AVAudioPlay
 double ba_player_duration(void *handle) { return handle ? [(__bridge AVAudioPlayer *)handle duration] : 0; }
 void ba_player_seek(void *handle, double time) { if (handle) [(__bridge AVAudioPlayer *)handle setCurrentTime:time]; }
 bool ba_player_is_playing(void *handle) { return handle && [(__bridge AVAudioPlayer *)handle isPlaying]; }
+
+float ba_player_rate(void *handle) { return handle ? [(__bridge AVAudioPlayer *)handle rate] : 1.0; }
+void ba_player_set_rate(void *handle, float rate) { if (handle) [(__bridge AVAudioPlayer *)handle setRate:rate]; }
