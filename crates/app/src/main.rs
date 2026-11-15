@@ -41,7 +41,7 @@ fn loading_placeholders(label: &'static str, cx: &Context<Shell>) -> gpui_kit::A
         .max_w(px(620.))
         .child(
             div()
-                .text_size(px(14.))
+                .type_style(ui::text::CALLOUT)
                 .text_color(label_color)
                 .child(ShimmerText::new(label)),
         );
@@ -1389,17 +1389,12 @@ impl Shell {
                 .flex()
                 .flex_col()
                 .gap(px(4.))
-                .child(
-                    div()
-                        .text_size(px(16.))
-                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                        .child("Chapters"),
-                );
+                .child(div().type_style(ui::text::GROUP_TITLE).child("Chapters"));
             if active.chapters.is_empty() {
                 panel = panel.child(
                     div()
                         .mt(px(12.))
-                        .text_size(px(13.))
+                        .type_style(ui::text::BODY)
                         .text_color(palette.on_field_muted)
                         .child(message),
                 );
@@ -1423,7 +1418,7 @@ impl Shell {
                         .py(px(10.))
                         .px(px(8.))
                         .rounded(px(7.))
-                        .text_size(px(13.))
+                        .type_style(ui::text::BODY)
                         .text_color(palette.on_field)
                         .hover(|style| style.bg(palette.on_field_track))
                         .on_click(cx.listener(move |this, _, _, cx| this.seek_fraction(target, cx)))
@@ -1542,7 +1537,7 @@ impl Shell {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(12.))
+                            .type_style(ui::text::CAPTION)
                             .text_color(palette.on_field)
                             .child(message.clone()),
                     )
@@ -1562,7 +1557,7 @@ impl Shell {
                 div()
                     .mx(px(if compact { 24. } else { 56. }))
                     .mt(px(8.))
-                    .text_size(px(12.))
+                    .type_style(ui::text::CAPTION)
                     .text_color(palette.on_field_muted)
                     .child(message)
             }))
@@ -1581,7 +1576,7 @@ impl Shell {
                                 .map(gpui_kit::ImageSource::from)
                                 .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
                             CoverSize::Square(cover_size),
-                            8.,
+                            ui::metrics::radius::COVER_LARGE,
                         )
                         .elevation(Elevation::CoverStage),
                     )
@@ -1591,16 +1586,11 @@ impl Shell {
                             .max_w(px(560.))
                             .flex()
                             .flex_col()
-                            .child(
-                                div()
-                                    .font_family("Literata")
-                                    .text_size(px(24.))
-                                    .child(title),
-                            )
+                            .child(div().type_style(ui::text::BOOK_TITLE).child(title))
                             .child(
                                 div()
                                     .mt(px(6.))
-                                    .text_size(px(14.))
+                                    .type_style(ui::text::CALLOUT)
                                     .text_color(palette.on_field_muted)
                                     .child(credit),
                             )
@@ -1614,8 +1604,7 @@ impl Shell {
                             .child(
                                 div()
                                     .mt(px(8.))
-                                    .font_family("Literata")
-                                    .text_size(px(19.))
+                                    .type_style(ui::text::BOOK_CAPTION)
                                     .child(caption),
                             )
                             .child(div().mt(px(32.)).child(scrubber))
@@ -1624,7 +1613,7 @@ impl Shell {
                                     .flex()
                                     .justify_between()
                                     .mt(px(6.))
-                                    .text_size(px(12.))
+                                    .type_style(ui::text::CAPTION)
                                     .text_color(palette.on_field_muted)
                                     .child(time)
                                     .child(book_left),
@@ -2185,16 +2174,11 @@ impl Shell {
         let theme_fill = cx.theme().colors.fill;
         let hairline = cx.theme().colors.hairline;
         let hover_fill = cx.theme().colors.fill;
-        let heading = |title: &'static str| {
-            div()
-                .font_family("Literata")
-                .text_size(px(32.))
-                .child(title)
-        };
+        let heading = |title: &'static str| div().type_style(ui::text::BOOK_TITLE).child(title);
         let copy = |text: String| {
             div()
                 .max_w(px(570.))
-                .text_size(px(14.))
+                .type_style(ui::text::CALLOUT)
                 .text_color(color)
                 .child(text)
         };
@@ -2228,7 +2212,7 @@ impl Shell {
                     if self.bookmarks_loading { return loading_placeholders("Loading bookmarks…", cx); }
                     if self.bookmarks.is_empty() { return base().child(heading("No bookmarks yet")).child(copy("Save a moment from the player and find it here. Bookmarks are stored on this Mac.".into())).into_any_element(); }
                     return div().flex().flex_col().gap(px(12.))
-                        .child(div().text_size(px(13.)).text_color(color).child("Saved on this Mac"))
+                        .child(div().type_style(ui::text::BODY).text_color(color).child("Saved on this Mac"))
                         .children(self.bookmarks.iter().filter_map(|(asin, position)| {
                             let item = library.items.iter().find(|item| &item.asin == asin)?;
                             let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
@@ -2241,8 +2225,8 @@ impl Shell {
                             let play_title = title.clone();
                             Some(div().flex().items_center().gap(px(16.)).py(px(14.)).border_b_1().border_color(hairline)
                                 .child(div().flex_1().flex().flex_col().gap(px(4.))
-                                    .child(div().font_family("Literata").text_size(px(18.)).child(title))
-                                    .child(div().text_size(px(12.)).text_color(color).child(time)))
+                                    .child(div().type_style(ui::text::BOOK_ROW).child(title))
+                                    .child(div().type_style(ui::text::CAPTION).text_color(color).child(time)))
                                 .child(if downloaded {
                                     IconButton::new(format!("bookmark-play-{asin}-{position}"), Icon::Play, 16.).hit_area(30.).color(theme_ink).hover_fill(theme_fill).tooltip("Play from here").on_click(cx.listener(move |this, _, _, cx| this.start_player_at(key.clone(), play_asin.clone(), play_title.clone(), Some(bookmark_position), cx)))
                                 } else {
@@ -2327,20 +2311,20 @@ impl Shell {
                     let mut view = div().flex().flex_col().gap(px(36.));
                     if self.showing_search {
                         view = view.child(div().flex().child(BackLink::new("explore-home", "Explore").on_click(cx.listener(|this, _, _, cx| { this.showing_search = false; this.search_message = None; cx.notify(); }))))
-                            .children(self.search_message.iter().map(|message| div().text_size(px(13.)).text_color(color).child(message.clone())))
+                            .children(self.search_message.iter().map(|message| div().type_style(ui::text::BODY).text_color(color).child(message.clone())))
                             .children(self.search_results.iter().map(|item| {
                                 let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
                                 let image = self.covers.get(&item.asin).cloned();
                                 let product = item.clone();
                                 div().id(format!("catalog-{}", item.asin)).cursor_pointer().rounded(px(8.)).hover(|style| style.bg(hover_fill)).active(|style| style.opacity(0.8)).flex().items_center().gap(px(18.)).pb(px(16.)).border_b_1().border_color(hairline)
                                     .on_click(cx.listener(move |this, _, _, cx| this.open_catalog_book(product.clone(), cx)))
-                                    .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(72.), 6.))
+                                    .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(72.), ui::metrics::radius::COVER).elevation(Elevation::CoverThumb))
                                     .child(div().flex().flex_col().gap(px(5.))
-                                        .child(div().font_family("Literata").text_size(px(18.)).child(title))
-                                        .child(div().text_size(px(13.)).text_color(color).child(item.author_names())))
+                                        .child(div().type_style(ui::text::BOOK_ROW).child(title))
+                                        .child(div().type_style(ui::text::BODY).text_color(color).child(item.author_names())))
                             }));
                     } else if let Some(feed) = &self.explore_feed {
-                        if let Some(message) = &feed.warning { view = view.child(div().text_size(px(13.)).text_color(color).child(message.clone())); }
+                        if let Some(message) = &feed.warning { view = view.child(div().type_style(ui::text::BODY).text_color(color).child(message.clone())); }
                         if let Some(item) = feed.new_releases.first() {
                             let product = item.clone();
                             let palette = self.palettes.get(&item.asin).copied().unwrap_or_default();
@@ -2385,7 +2369,7 @@ impl Shell {
                         if self.explore_loading {
                             view = view.child(loading_placeholders("Loading Explore…", cx));
                         } else {
-                            view = view.child(div().text_size(px(13.)).text_color(color).child("Explore is unavailable right now."))
+                            view = view.child(div().type_style(ui::text::BODY).text_color(color).child("Explore is unavailable right now."))
                                 .child(div().flex().child(Button::new("load-explore").label("Try again").on_click(cx.listener(|this, _, _, cx| this.load_explore(cx)))));
                         }
                     }
@@ -2410,8 +2394,8 @@ impl Shell {
                                 this.navigation_generation += 1;
                                 cx.notify();
                             }))
-                            .child(div().flex_1().font_family("Literata").text_size(px(18.)).child(name))
-                            .child(div().text_size(px(12.)).text_color(color).child(format!("{count} {}", if count == 1 { "book" } else { "books" })))
+                            .child(div().flex_1().type_style(ui::text::BOOK_ROW).child(name))
+                            .child(div().type_style(ui::text::CAPTION).text_color(color).child(format!("{count} {}", if count == 1 { "book" } else { "books" })))
                     })).into_any_element();
                 }
                 let query = self.library_search.read(cx).value().trim().to_lowercase();
@@ -2437,9 +2421,9 @@ impl Shell {
                         let target = if self.page == Page::AuthorBooks { Page::Authors } else { Page::Series };
                         div().flex().items_center().gap(px(16.))
                             .child(BackLink::new("browse-back", page_name(target)).on_click(cx.listener(move |this, _, _, cx| { this.page = target; cx.notify(); })))
-                            .child(div().font_family("Literata").text_size(px(24.)).child(self.browse_name.clone().unwrap_or_default()))
+                            .child(div().type_style(ui::text::BOOK_TITLE).child(self.browse_name.clone().unwrap_or_default()))
                     }))
-                    .child(div().text_size(px(13.)).text_color(color).child(format!("{} titles", items.len())))
+                    .child(div().type_style(ui::text::BODY).text_color(color).child(format!("{} titles", items.len())))
                     .children(items.into_iter().map(|item| {
                         let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
                         let author = item.author_names();
@@ -2459,13 +2443,13 @@ impl Shell {
                         div().flex().items_center().gap(px(20.)).pb(px(16.)).border_b_1().border_color(hairline)
                             .child(div().id(open_id).cursor_pointer().rounded(px(8.)).hover(|style| style.bg(hover_fill)).active(|style| style.opacity(0.8)).flex_1().min_w_0().flex().items_center().gap(px(20.))
                                 .on_click(cx.listener(move |this, _, _, cx| this.open_book(open_asin.clone(), cx)))
-                                .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(76.), 6.))
+                                .child(Cover::new(image.map(gpui_kit::ImageSource::from).unwrap_or_else(|| gpui_kit::ImageSource::from("")), CoverSize::Square(76.), ui::metrics::radius::COVER).elevation(Elevation::CoverThumb))
                                 .child(div().flex_1().min_w_0().flex().flex_col().gap(px(5.))
-                                    .child(div().font_family("Literata").text_size(px(19.)).child(title))
-                                    .child(div().text_size(px(13.)).text_color(color).child(author))))
-                            .child(div().text_size(px(13.)).text_color(color).child(progress))
+                                    .child(div().type_style(ui::text::BOOK_ROW).child(title))
+                                    .child(div().type_style(ui::text::BODY).text_color(color).child(author))))
+                            .child(div().type_style(ui::text::BODY).text_color(color).child(progress))
                             .child(if let Some(stage) = active_stage {
-                                div().text_size(px(13.)).text_color(color).child(format!("{stage}…")).into_any_element()
+                                div().type_style(ui::text::BODY).text_color(color).child(format!("{stage}…")).into_any_element()
                             } else if downloaded {
                                 div().flex().items_center().gap(px(8.))
                                     .child(IconButton::new(format!("reveal-{asin}"), Icon::Folder, 16.).hit_area(30.).hover_fill(theme_fill).tooltip("Show in Finder").on_click(cx.listener(move |this, _, _, cx| {
@@ -2475,7 +2459,7 @@ impl Shell {
                                     })))
                                     .child(IconButton::new(button_id, Icon::Play, 16.).hit_area(30.).color(theme_ink).hover_fill(theme_fill).tooltip("Play").on_click(cx.listener(move |this, _, _, cx| this.start_player(key.clone(), asin.clone(), download_title.clone(), cx)))).into_any_element()
                             } else if other_download {
-                                div().text_size(px(12.)).text_color(color).child("One download at a time").into_any_element()
+                                div().type_style(ui::text::CAPTION).text_color(color).child("One download at a time").into_any_element()
                             } else {
                                 IconButton::new(button_id, Icon::Download, 16.).hit_area(30.).color(theme_ink).hover_fill(theme_fill).tooltip("Download to this Mac").on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), download_title.clone(), cx))).into_any_element()
                             })
@@ -2529,7 +2513,7 @@ impl Render for Shell {
                     .child(
                         div()
                             .flex_1()
-                            .text_size(px(13.))
+                            .type_style(ui::text::BODY)
                             .text_color(theme.colors.ink)
                             .child(message.clone()),
                     )
@@ -2594,14 +2578,14 @@ impl Render for Shell {
                                 .gap(px(3.))
                                 .child(
                                     div()
-                                        .text_size(px(13.))
+                                        .type_style(ui::text::BODY)
                                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                         .text_color(theme.accent.on_tint)
                                         .child(format!("{stage} · {title}")),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(12.))
+                                        .type_style(ui::text::CAPTION)
                                         .text_color(theme.colors.ink_secondary)
                                         .child(detail),
                                 ),
@@ -2685,7 +2669,7 @@ impl Render for Shell {
                                     .map(gpui_kit::ImageSource::from)
                                     .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
                                 CoverSize::Square(48.),
-                                6.,
+                                ui::metrics::radius::COVER,
                             )
                             .elevation(Elevation::CoverThumb),
                         )
@@ -2875,7 +2859,7 @@ impl Render for Shell {
                         div()
                             .px(px(10.))
                             .pb(px(25.))
-                            .text_size(px(12.))
+                            .type_style(ui::text::CAPTION)
                             .text_color(theme.colors.ink_secondary)
                             .child(account_label),
                     ),

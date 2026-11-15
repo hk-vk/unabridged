@@ -78,13 +78,13 @@ impl Shell {
                             .gap(px(3.))
                             .child(
                                 div()
-                                    .text_size(px(14.))
+                                    .type_style(ui::text::CALLOUT)
                                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                                     .child(accent.name()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.))
+                                    .type_style(ui::text::CAPTION)
                                     .text_color(theme.colors.ink_secondary)
                                     .child(accent.note()),
                             ),
@@ -107,15 +107,15 @@ impl Shell {
             });
         div().max_w(px(640.)).flex().flex_col().gap(px(24.))
             .child(div().flex().flex_col().gap(px(10.))
-                .child(div().text_size(px(16.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Mode"))
+                .child(div().type_style(ui::text::GROUP_TITLE).child("Mode"))
                 .child(div().flex().gap(px(10.)).children(modes)))
             .child(div().flex().flex_col().gap(px(10.))
-                .child(div().text_size(px(16.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Accent theme"))
+                .child(div().type_style(ui::text::GROUP_TITLE).child("Accent theme"))
                 .children(accents))
             .child(div().flex().items_center().gap(px(14.)).py(px(10.))
                 .child(div().flex_1().flex().flex_col().gap(px(3.))
-                    .child(div().text_size(px(14.)).child("Tint Now Playing with the cover"))
-                    .child(div().text_size(px(12.)).text_color(theme.colors.ink_secondary).child("The player takes its colour from the book you are listening to.")))
+                    .child(div().type_style(ui::text::CALLOUT).child("Tint Now Playing with the cover"))
+                    .child(div().type_style(ui::text::CAPTION).text_color(theme.colors.ink_secondary).child("The player takes its colour from the book you are listening to.")))
                 .child(toggle))
             .into_any_element()
     }
