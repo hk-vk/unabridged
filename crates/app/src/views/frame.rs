@@ -375,45 +375,28 @@ impl Shell {
             .child(div().flex_1())
             .child(self.nav("Settings", Icon::Settings, Page::Settings, cx))
             .child(
-                div()
-                    .mt(px(6.))
-                    .mb(px(18.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(
-                        ui::icon(Icon::UserCircle)
-                            .size(px(22.))
-                            .text_color(theme.colors.ink_secondary),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .type_style(ui::text::CAPTION_MEDIUM)
-                                    .text_color(theme.colors.ink)
-                                    .truncate()
-                                    .child(account_label),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(5.))
-                                    .child(div().size(px(6.)).rounded_full().bg(status_color))
-                                    .child(
+                div().mb(px(18.)).child(
+                    SidebarItem::new("sidebar-account", Icon::UserCircle, account_label)
+                        .trailing(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .when(!online, |el| {
+                                    el.child(
                                         div()
                                             .type_style(ui::text::FOOTNOTE)
                                             .text_color(theme.colors.ink_secondary)
                                             .child(status),
-                                    ),
-                            ),
-                    ),
+                                    )
+                                })
+                                .child(div().size(px(7.)).rounded_full().bg(status_color)),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.page = Page::Settings;
+                            cx.notify();
+                        })),
+                ),
             )
             .into_any_element()
     }

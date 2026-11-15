@@ -32,6 +32,7 @@ pub struct SidebarItem {
     icon: Icon,
     label: SharedString,
     selected: bool,
+    trailing: Option<AnyElement>,
     on_click: Option<ClickHandler>,
 }
 
@@ -43,6 +44,7 @@ impl SidebarItem {
             icon,
             label: label.into(),
             selected: false,
+            trailing: None,
             on_click: None,
         }
     }
@@ -50,6 +52,12 @@ impl SidebarItem {
     /// Marks the row as the current destination.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Puts a small accessory (a status dot, a count) at the row's end.
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing = Some(element.into_any_element());
         self
     }
 
@@ -88,12 +96,14 @@ impl RenderOnce for SidebarItem {
             )
             .child(
                 div()
+                    .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_color(label_color)
                     .type_style(style)
                     .child(self.label),
             )
+            .children(self.trailing)
             .when_some(self.on_click, |el, handler| {
                 el.cursor_pointer()
                     .hover(|style| style.opacity(0.86))
