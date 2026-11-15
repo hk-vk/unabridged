@@ -1,5 +1,6 @@
 //! Better Audible's native application shell.
 mod backend;
+mod mini_player;
 mod player;
 mod settings;
 
@@ -172,6 +173,10 @@ struct ActivePlayer {
 
 struct Shell {
     page: Page,
+    main_window: Option<gpui_kit::AnyWindowHandle>,
+    mini_window: Option<gpui_kit::AnyWindowHandle>,
+    mini_opening: bool,
+    main_opening: bool,
     previous_page: Page,
     selected_book: Option<audible::Asin>,
     selected_catalog_book: Option<audible::models::Product>,
@@ -263,6 +268,10 @@ impl Shell {
         let marketplace = cx.new(|cx| SelectState::new(marketplaces, None, window, cx));
         let mut shell = Self {
             page: Page::Library,
+            main_window: Some(window.window_handle()),
+            mini_window: None,
+            mini_opening: false,
+            main_opening: false,
             previous_page: Page::Library,
             selected_book: None,
             selected_catalog_book: None,
@@ -908,6 +917,133 @@ impl Shell {
         cx.notify();
     }
 
+    fn open_mini_player(&mut self, cx: &mut Context<Self>) {
+        if self.player.is_none() || self.mini_opening {
+            return;
+        }
+        self.mini_opening = true;
+        let shell = cx.entity();
+        let existing = self.mini_window;
+        // Opening a window can render immediately. Defer it until the Shell
+        // entity is no longer mutably borrowed by the click handler.
+        cx.defer(move |cx| {
+            if let Some(handle) = existing
+                && handle
+                    .update(cx, |_, window, _| window.activate_window())
+                    .is_ok()
+            {
+                shell.update(cx, |this, cx| {
+                    this.mini_opening = false;
+                    cx.notify();
+                });
+                return;
+            }
+            let bounds = Bounds::new(point(px(160.), px(160.)), size(px(420.), px(160.)));
+            let view_shell = shell.clone();
+            let result = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        appears_transparent: cfg!(target_os = "macos"),
+                        ..Default::default()
+                    }),
+                    kind: gpui_kit::WindowKind::Floating,
+                    show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
+                    focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
+                    is_resizable: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    let mini = cx.new(|cx| mini_player::MiniPlayer::new(view_shell, cx));
+                    cx.new(|cx| Root::new(mini, window, cx))
+                },
+            );
+            shell.update(cx, |this, cx| {
+                this.mini_opening = false;
+                match result {
+                    Ok(handle) => {
+                        this.mini_window = Some(handle.into());
+                        #[cfg(debug_assertions)]
+                        if std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_some() {
+                            eprintln!("Smoke test: mini player window opened");
+                        }
+                    }
+                    Err(error) => {
+                        this.download_notice =
+                            Some(format!("Could not open the mini player: {error}"))
+                    }
+                }
+                cx.notify();
+            });
+            #[cfg(debug_assertions)]
+            if std::env::var_os("BETTER_AUDIBLE_SMOKE_REOPEN").is_some() {
+                let shell = shell.clone();
+                cx.defer(move |cx| {
+                    let main = shell.read(cx).main_window;
+                    if let Some(handle) = main {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
+                    shell.update(cx, |this, cx| this.show_main_player(cx));
+                });
+            }
+        });
+    }
+
+    fn show_main_player(&mut self, cx: &mut Context<Self>) {
+        self.open_player(cx);
+        if self.main_opening {
+            return;
+        }
+        self.main_opening = true;
+        let shell = cx.entity();
+        let existing = self.main_window;
+        cx.defer(move |cx| {
+            if let Some(handle) = existing
+                && handle
+                    .update(cx, |_, window, _| window.activate_window())
+                    .is_ok()
+            {
+                shell.update(cx, |this, cx| {
+                    this.main_opening = false;
+                    cx.notify();
+                });
+                return;
+            }
+            let bounds = Bounds::new(point(px(100.), px(100.)), size(px(1200.), px(800.)));
+            let view_shell = shell.clone();
+            let result = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
+                    focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
+                    titlebar: Some(TitlebarOptions {
+                        appears_transparent: cfg!(target_os = "macos"),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                |window, cx| cx.new(|cx| Root::new(view_shell, window, cx)),
+            );
+            shell.update(cx, |this, cx| {
+                this.main_opening = false;
+                match result {
+                    Ok(handle) => {
+                        this.main_window = Some(handle.into());
+                        #[cfg(debug_assertions)]
+                        if std::env::var_os("BETTER_AUDIBLE_SMOKE_REOPEN").is_some() {
+                            eprintln!("Smoke test: main player window reopened");
+                        }
+                    }
+                    Err(error) => {
+                        this.download_notice =
+                            Some(format!("Could not open the main window: {error}"))
+                    }
+                }
+                cx.notify();
+            });
+        });
+    }
+
     fn open_player(&mut self, cx: &mut Context<Self>) {
         if self.player.is_some() {
             if self.page != Page::NowPlaying {
@@ -1016,10 +1152,14 @@ impl Shell {
         }
     }
 
-    fn player_view(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn player_view(&self, window: &Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(active) = &self.player else {
             return div().into_any_element();
         };
+        let compact = f32::from(window.viewport_size().width) < 1000.;
+        let cover_size = if compact { 190. } else { 320. };
+        let chapter_width = if compact { 180. } else { 260. };
+        let content_gap = if compact { 24. } else { 64. };
         let book = match &self.account {
             Account::Ready(library) => library.items.iter().find(|item| item.asin == active.asin),
             _ => None,
@@ -1095,7 +1235,7 @@ impl Shell {
             };
             let mut panel = div()
                 .id("chapter-list")
-                .w(px(260.))
+                .w(px(chapter_width))
                 .h_full()
                 .flex_none()
                 .overflow_y_scroll()
@@ -1214,6 +1354,12 @@ impl Shell {
                             .children(self.download_notice.iter().cloned()),
                     )
                     .child(
+                        Button::new("open-mini")
+                            .label("Mini player")
+                            .variant(ButtonVariant::Glass(palette))
+                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
+                    )
+                    .child(
                         Button::new("add-bookmark")
                             .label("Bookmark")
                             .icon(Icon::BookmarkAdd)
@@ -1248,14 +1394,14 @@ impl Shell {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .gap(px(64.))
+                    .gap(px(content_gap))
                     .px(px(56.))
                     .child(
                         Cover::new(
                             image
                                 .map(gpui_kit::ImageSource::from)
                                 .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
-                            CoverSize::Square(320.),
+                            CoverSize::Square(cover_size),
                             8.,
                         )
                         .elevation(Elevation::CoverStage),
@@ -1283,7 +1429,7 @@ impl Shell {
                                 div()
                                     .mt(px(40.))
                                     .font_family("Geist Pixel")
-                                    .text_size(px(104.))
+                                    .text_size(px(if compact { 70. } else { 104. }))
                                     .child(left),
                             )
                             .child(
@@ -1851,7 +1997,7 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.page == Page::NowPlaying && self.player.is_some() {
-            return self.player_view(cx);
+            return self.player_view(window, cx);
         }
         let theme = cx.theme().clone();
         let title = match self.page {
@@ -2111,6 +2257,11 @@ impl Render for Shell {
                             .label(format!("{speed}×"))
                             .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
                     )
+                    .child(
+                        Button::new("bar-mini")
+                            .label("Mini player")
+                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
+                    )
                     .into_any_element()
             });
         let content = div().w_full().child(self.account_view(window, cx));
@@ -2194,6 +2345,46 @@ impl Render for Shell {
     }
 }
 
+#[cfg(debug_assertions)]
+fn smoke_open_mini(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App) {
+    let Some(path) = std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO") else {
+        return;
+    };
+    let result = handle.update(cx, |root, _, cx| {
+        let shell = root
+            .view()
+            .clone()
+            .downcast::<Shell>()
+            .map_err(|_| anyhow::anyhow!("Smoke test could not find the app view"))?;
+        shell.update(cx, |shell, cx| {
+            let player = player::Player::open(std::path::Path::new(&path))?;
+            shell.player = Some(ActivePlayer {
+                asin: audible::Asin::new("SMOKETEST")?,
+                account_key: "0".repeat(64),
+                title: "Test audio".into(),
+                player,
+                was_playing: false,
+                chapters: Vec::new(),
+                chapters_loading: false,
+            });
+            shell.open_player(cx);
+            shell.open_mini_player(cx);
+            Ok::<(), anyhow::Error>(())
+        })
+    });
+    match result {
+        Ok(Ok(())) => eprintln!("Smoke test: mini player requested"),
+        Ok(Err(error)) => {
+            eprintln!("Smoke test failed: {error:#}");
+            cx.quit();
+        }
+        Err(error) => {
+            eprintln!("Smoke test failed: {error:#}");
+            cx.quit();
+        }
+    }
+}
+
 fn main() {
     gpui_kit::application().with_assets(ui::Assets).run(|cx| {
         gpui_kit::init(cx);
@@ -2206,6 +2397,8 @@ fn main() {
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
+                focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
                 titlebar: Some(TitlebarOptions {
                     appears_transparent: cfg!(target_os = "macos"),
                     ..Default::default()
@@ -2217,7 +2410,13 @@ fn main() {
                 cx.new(|cx| Root::new(view, window, cx))
             },
         ) {
-            Ok(_) => cx.activate(true),
+            Ok(_handle) => {
+                #[cfg(debug_assertions)]
+                smoke_open_mini(_handle, cx);
+                if std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none() {
+                    cx.activate(true);
+                }
+            }
             Err(error) => {
                 eprintln!("Could not open the app window: {error:#}");
                 cx.quit();
