@@ -12,6 +12,7 @@ name = "better-audible"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 anyhow.workspace = true
 audible = { path = "../audible" }
 tokio = { version = "1", features = ["rt", "time", "net"] }

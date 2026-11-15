@@ -603,6 +603,7 @@ dependencies = [
  "anyhow",
  "audible",
  "cc",
+ "chrono",
  "gpui-kit",
  "hex",
  "image",

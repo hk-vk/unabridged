@@ -102,6 +102,10 @@ icons! {
     Pip => "pip",
     /// Show in Finder (`folder-open`).
     Folder => "folder",
+    /// Slower, smaller (`minus-sign`).
+    Minus => "minus",
+    /// Faster, larger (`plus-sign`).
+    Plus => "plus",
     /// Read along (`subtitle`).
     Subtitle => "subtitle",
     /// Appearance settings (`paint-board`).

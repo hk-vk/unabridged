@@ -723,6 +723,34 @@ fn appearance_path() -> anyhow::Result<std::path::PathBuf> {
         .join("Library/Application Support/Better Audible/appearance.json"))
 }
 
+/// Speed and volume, carried over between launches.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PlaybackPrefs {
+    pub speed: Option<f32>,
+    pub volume: Option<f32>,
+}
+
+fn playback_path() -> anyhow::Result<std::path::PathBuf> {
+    Ok(appearance_path()?.with_file_name("playback.json"))
+}
+
+pub fn load_playback() -> PlaybackPrefs {
+    playback_path()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+static PLAYBACK_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn save_playback(prefs: &PlaybackPrefs) -> anyhow::Result<()> {
+    let _guard = PLAYBACK_SERIAL
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Could not save playback settings"))?;
+    write_json(&playback_path()?, prefs)
+}
+
 pub fn load_appearance() -> ui::ThemeSettings {
     let fallback = ui::ThemeSettings {
         mode: ui::theme::Mode::Light,

@@ -290,16 +290,18 @@ impl Shell {
                         .flex()
                         .items_center()
                         .gap(px(6.))
-                        .child(self.speed_menu(
+                        .child(self.speed_picker(
                             "bar-speed-menu",
                             gpui_kit::Anchor::BottomRight,
+                            menus::PickerColors::window(cx),
                             Chip::new("bar-speed").label(model::format::speed(speed)),
                             cx,
                         ))
                         .child(
-                            self.sleep_menu(
+                            self.sleep_picker(
                                 "bar-sleep-menu",
                                 gpui_kit::Anchor::BottomRight,
+                                menus::PickerColors::window(cx),
                                 IconButton::new("bar-sleep", Icon::Moon, 16.)
                                     .hit_area(28.)
                                     .color(if sleeping {
@@ -313,14 +315,16 @@ impl Shell {
                             ),
                         )
                         .child(
-                            IconButton::new("bar-chapters", Icon::Chapters, 16.)
-                                .hit_area(28.)
-                                .hover_fill(theme.colors.fill)
-                                .tooltip("Chapters")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.chapters_open = true;
-                                    this.open_player(cx);
-                                })),
+                            self.chapter_picker(
+                                "bar-chapters-menu",
+                                gpui_kit::Anchor::BottomRight,
+                                menus::PickerColors::window(cx),
+                                IconButton::new("bar-chapters", Icon::Chapters, 16.)
+                                    .hit_area(28.)
+                                    .hover_fill(theme.colors.fill)
+                                    .tooltip("Chapters"),
+                                cx,
+                            ),
                         )
                         .children((!compact_bar).then(|| {
                             IconButton::new("bar-mini", Icon::Pip, 16.)

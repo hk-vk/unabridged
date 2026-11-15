@@ -11,7 +11,7 @@ mod views;
 mod windows;
 
 use books::*;
-use views::{copy, heading, loading_placeholders, mini_player, page_base};
+use views::{copy, heading, loading_placeholders, menus, mini_player, page_base};
 
 use audible::{Marketplace, auth::LoginSession};
 use gpui_kit::{
@@ -181,7 +181,6 @@ struct Shell {
     selected_catalog_book: Option<audible::models::Product>,
     seek_generation: u64,
     navigation_generation: u64,
-    chapters_open: bool,
     bookmarks: Vec<(audible::Asin, u64)>,
     bookmarks_loading: bool,
     sleep: SleepTimer,
@@ -211,8 +210,11 @@ struct Shell {
     read_along_open: bool,
     /// The sleep timer choice behind `sleep`, for the menu's checkmark.
     sleep_choice: &'static str,
+    /// Speed and volume, saved between launches.
+    prefs: backend::PlaybackPrefs,
     read_along: Option<ReadAlong>,
     read_along_scroll: gpui_kit::ScrollHandle,
+    chapter_picker_scroll: gpui_kit::ScrollHandle,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,
     covers_pending: std::collections::HashSet<audible::Asin>,
     palettes: std::collections::HashMap<audible::Asin, ui::theme::BookPalette>,

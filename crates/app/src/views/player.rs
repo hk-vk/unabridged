@@ -12,7 +12,6 @@ impl Shell {
         };
         let compact = f32::from(window.viewport_size().width) < 1000.;
         let cover_size = if compact { 190. } else { 320. };
-        let chapter_width = if compact { 180. } else { 260. };
         let content_gap = if compact { 24. } else { 64. };
         let book = match &self.account {
             Account::Ready(library) => library.items.iter().find(|item| item.asin == active.asin),
@@ -58,106 +57,6 @@ impl Shell {
                 let _ = weak.update(cx, |this, cx| this.seek_fraction(target, cx));
             }
         });
-        let chapter_panel = if self.chapters_open {
-            let message = "Chapters unavailable for this book.";
-            let mut panel = div()
-                .id("chapter-list")
-                .w(px(chapter_width))
-                .h_full()
-                .flex_none()
-                .overflow_y_scroll()
-                .p(px(16.))
-                .rounded(px(10.))
-                .bg(palette.on_field_track)
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .child(div().type_style(ui::text::GROUP_TITLE).child("Chapters"));
-            if active.chapters_loading && active.chapters.is_empty() {
-                let reduced_motion = cx.reduce_motion();
-                for index in 0_usize..8 {
-                    let width = [180., 140., 200., 160.][index % 4];
-                    panel = panel.child(
-                        div()
-                            .id(("chapter-loading", index))
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .py(px(10.))
-                            .px(px(8.))
-                            .child(if reduced_motion {
-                                div()
-                                    .w(px(width))
-                                    .h(px(12.))
-                                    .rounded(px(6.))
-                                    .bg(palette.on_field_track)
-                                    .into_any_element()
-                            } else {
-                                Skeleton::new()
-                                    .w(px(width))
-                                    .h(px(12.))
-                                    .rounded(px(6.))
-                                    .into_any_element()
-                            })
-                            .child(
-                                div()
-                                    .w(px(40.))
-                                    .h(px(12.))
-                                    .rounded(px(6.))
-                                    .bg(palette.on_field_track),
-                            ),
-                    );
-                }
-            } else if active.chapters.is_empty() {
-                panel = panel.child(
-                    div()
-                        .mt(px(12.))
-                        .type_style(ui::text::BODY)
-                        .text_color(palette.on_field_muted)
-                        .child(message),
-                );
-            }
-            for (index, chapter) in active.chapters.iter().enumerate() {
-                let name = if chapter.title.is_empty() {
-                    format!("Chapter {}", index + 1)
-                } else {
-                    chapter.title.clone()
-                };
-                let start = chapter.start_offset_ms as f64 / 1000.;
-                let target = if timeline.duration > 0. {
-                    (start / timeline.duration).clamp(0., 1.) as f32
-                } else {
-                    0.
-                };
-                panel = panel.child(
-                    div()
-                        .id(("chapter", index))
-                        .cursor_pointer()
-                        .py(px(10.))
-                        .px(px(8.))
-                        .rounded(px(7.))
-                        .type_style(ui::text::BODY)
-                        .text_color(palette.on_field)
-                        .hover(|style| style.bg(palette.on_field_track))
-                        .on_click(cx.listener(move |this, _, _, cx| this.seek_fraction(target, cx)))
-                        .child(name),
-                );
-            }
-            let panel = if cx.reduce_motion() {
-                panel.into_any_element()
-            } else {
-                gpui_kit::base::animation::EffectTransition::new(std::time::Duration::from_millis(
-                    140,
-                ))
-                .slide_x(px(10.), px(0.))
-                .fade(0.90, 1.0)
-                .apply(panel.relative(), "chapter-panel-enter")
-                .into_any_element()
-            };
-            Some(panel)
-        } else {
-            None
-        };
         let field_pill = ChipStyle::Outline {
             outline: palette.on_field_track,
             content: palette.on_field,
@@ -218,8 +117,10 @@ impl Shell {
                             .justify_center()
                             .child(
                                 div().max_w(px(if compact { 260. } else { 420. })).child(
-                                    self.chapter_menu(
+                                    self.chapter_picker(
                                         "current-chapter-menu",
+                                        gpui_kit::Anchor::TopCenter,
+                                        menus::PickerColors::field(&palette),
                                         Chip::new("current-chapter")
                                             .label(format!("{name}  ·  {} of {total}", index + 1))
                                             .icon(Icon::Chapters, palette.on_field_muted)
@@ -264,32 +165,7 @@ impl Shell {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.read_along_open = !this.read_along_open;
                                 if this.read_along_open {
-                                    this.chapters_open = false;
                                     this.ensure_read_along(cx);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Chip::new("show-chapters")
-                            .label("Chapters")
-                            .icon(Icon::Chapters, palette.on_field)
-                            .height(ui::metrics::size::POPUP)
-                            .style(if self.chapters_open {
-                                ChipStyle::Tint {
-                                    fill: palette.on_field_track,
-                                    content: palette.on_field,
-                                }
-                            } else {
-                                ChipStyle::Tint {
-                                    fill: gpui_kit::transparent_black(),
-                                    content: palette.on_field,
-                                }
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.chapters_open = !this.chapters_open;
-                                if this.chapters_open {
-                                    this.read_along_open = false;
                                 }
                                 cx.notify();
                             })),
@@ -402,8 +278,7 @@ impl Shell {
                                     .child(time)
                                     .child(book_left),
                             ),
-                    )
-                    .children(chapter_panel),
+                    ),
             )
             .child(
                 div()
@@ -420,9 +295,10 @@ impl Shell {
                             .items_center()
                             .gap(px(10.))
                             .child(
-                                self.speed_menu(
+                                self.speed_picker(
                                     "full-speed-menu",
                                     gpui_kit::Anchor::BottomLeft,
+                                    menus::PickerColors::field(&palette),
                                     Chip::new("full-speed")
                                         .label(model::format::speed(speed))
                                         .height(ui::metrics::size::FIELD_PILL)
@@ -432,9 +308,10 @@ impl Shell {
                                 ),
                             )
                             .child(
-                                self.sleep_menu(
+                                self.sleep_picker(
                                     "full-sleep-menu",
                                     gpui_kit::Anchor::BottomLeft,
+                                    menus::PickerColors::field(&palette),
                                     Chip::new("full-sleep")
                                         .label(self.sleep.chip_label(std::time::Instant::now()))
                                         .icon(Icon::Moon, palette.on_field)

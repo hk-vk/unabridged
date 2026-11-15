@@ -6,7 +6,7 @@ mod browse;
 mod explore;
 mod frame;
 mod home;
-mod menus;
+pub(crate) mod menus;
 pub(crate) mod mini_player;
 mod player;
 mod settings;

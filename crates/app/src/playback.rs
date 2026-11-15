@@ -121,6 +121,12 @@ impl Shell {
                 this.loading_player = false;
                 match result.and_then(|position| {
                     let player = player::Player::open(&path)?;
+                    if let Some(speed) = this.prefs.speed {
+                        player.set_rate(speed);
+                    }
+                    if let Some(volume) = this.prefs.volume {
+                        player.set_volume(volume);
+                    }
                     if let Some(millis) = position {
                         player.seek(millis as f64 / 1000.);
                     }
@@ -139,7 +145,6 @@ impl Shell {
                             chapters: Vec::new(),
                             chapters_loading: true,
                         });
-                        this.chapters_open = false;
                         this.load_chapters(cx);
                         this.download_notice = cancelled_timer.then(|| "Chapter sleep timer turned off when you changed books.".into());
                         this.open_player(cx);
@@ -288,6 +293,8 @@ impl Shell {
             active.player.set_volume(volume);
             cx.notify();
         }
+        self.prefs.volume = Some(volume);
+        self.save_prefs(cx);
     }
 
     pub(crate) fn set_speed(&mut self, speed: f32, cx: &mut Context<Self>) {
@@ -295,20 +302,30 @@ impl Shell {
             active.player.set_rate(speed);
             cx.notify();
         }
+        self.prefs.speed = Some(speed);
+        self.save_prefs(cx);
+    }
+
+    /// Writes speed and volume for the next launch.
+    pub(crate) fn save_prefs(&mut self, cx: &mut Context<Self>) {
+        let prefs = self.prefs.clone();
+        cx.background_spawn(async move {
+            let _ = backend::save_playback(&prefs);
+        })
+        .detach();
     }
 
     pub(crate) fn cycle_speed(&mut self, cx: &mut Context<Self>) {
         if let Some(active) = &self.player {
             let speed = active.player.rate();
-            active.player.set_rate(
-                [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
-                    .into_iter()
-                    .find(|next| *next > speed + 0.01)
-                    .unwrap_or(0.75),
-            );
-            cx.notify();
+            let next = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+                .into_iter()
+                .find(|next| *next > speed + 0.01)
+                .unwrap_or(0.75);
+            self.set_speed(next, cx);
         }
     }
+
 }
 
 impl ActivePlayer {
