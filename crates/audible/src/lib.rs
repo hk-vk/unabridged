@@ -24,8 +24,10 @@
 pub mod auth;
 pub mod credentials;
 pub mod error;
+pub mod http;
 pub mod locale;
 pub mod models;
+pub mod signing;
 
 pub use error::{Error, Result};
 pub use locale::{Endpoints, Marketplace};
