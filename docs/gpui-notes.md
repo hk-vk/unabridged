@@ -61,7 +61,8 @@ the file it came from.
 - `cx.text_system().add_fonts(vec![Cow::Borrowed(bytes)])` (`text_system.rs:301`) registers TTFs.
 - Family names come from the font's typographic family (name ID 16, then 1). Geist Medium and SemiBold
   report typographic family "Geist", so `.font_family("Geist")` plus a weight selects them.
-  Geist Pixel Square reports "Geist Pixel". Literata Regular reports "Literata".
+  Geist Pixel Square reports "Geist Pixel". Literata Regular reports "Literata". Verified at runtime with
+  `cx.text_system().all_font_names()` and `resolve_font`: Geist 400/500/600 resolve to three distinct faces.
 
 ## Text input
 
