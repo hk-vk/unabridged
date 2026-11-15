@@ -342,7 +342,7 @@ impl Shell {
                                     div()
                                         .mt(px(28.))
                                         .h(px(if compact { 220. } else { 340. }))
-                                        .child(self.read_along_view(&palette, cx)),
+                                        .child(self.read_along_view(&palette, window, cx)),
                                 )
                             })
                             .when(!self.read_along_open, |column| {
@@ -497,6 +497,7 @@ impl Shell {
     fn read_along_view(
         &self,
         palette: &ui::theme::BookPalette,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let message = |text: &'static str| {
@@ -588,6 +589,16 @@ impl Shell {
         let duration = active.player.duration().max(1.);
         let current = transcript::current_line(&job.lines, position);
         let still_working = job.phase == transcript::Phase::Transcribing;
+        // Glide the list and crossfade the highlight between lines.
+        let gliding = read.step_glide(&self.read_along_scroll);
+        let fade = read.changed_at.elapsed().as_secs_f32() / playback::HIGHLIGHT_FADE.as_secs_f32();
+        if gliding || fade < 1. {
+            window.request_animation_frame();
+        }
+        let fade = fade.min(1.);
+        let spoken = palette.on_field;
+        let upcoming = palette.on_field_muted;
+        let heard = palette.on_field_muted.opacity(0.55);
         let mut list = div()
             .id("read-along")
             .size_full()
@@ -599,10 +610,15 @@ impl Shell {
             .pb(px(120.));
         for (index, line) in job.lines.iter().enumerate() {
             let target = (line.start / duration).clamp(0., 1.) as f32;
-            let color = match current {
-                Some(spoken) if spoken == index => palette.on_field,
-                Some(spoken) if index < spoken => palette.on_field_muted.opacity(0.55),
-                _ => palette.on_field_muted,
+            let resting = |line: Option<usize>| match line {
+                Some(at) if at == index => spoken,
+                Some(at) if index < at => heard,
+                _ => upcoming,
+            };
+            let color = if read.followed == current {
+                playback::mix(resting(read.previous), resting(current), fade)
+            } else {
+                resting(current)
             };
             list = list.child(
                 div()

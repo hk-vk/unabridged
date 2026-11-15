@@ -152,6 +152,20 @@ struct ReadAlong {
     followed: Option<usize>,
     /// A model download is running; transcribe once it finishes.
     downloading: bool,
+    /// The line that was spoken before `followed`, and when that changed,
+    /// for the highlight crossfade.
+    previous: Option<usize>,
+    changed_at: std::time::Instant,
+    /// The scroll glide in progress, if any. A `Cell` so render can finish it.
+    glide: std::cell::Cell<Option<Glide>>,
+}
+
+/// An eased scroll from one offset to another.
+#[derive(Clone, Copy)]
+struct Glide {
+    from: gpui_kit::Pixels,
+    to: gpui_kit::Pixels,
+    started: std::time::Instant,
 }
 
 struct Shell {

@@ -143,7 +143,7 @@ impl Shell {
                         }
                         if this.read_along_open && this.page == Page::NowPlaying {
                             this.ensure_read_along(cx);
-                            this.follow_read_along();
+                            this.follow_read_along(cx.reduce_motion());
                             cx.notify();
                         }
                         if this.player.as_ref().is_some_and(|p| p.player.is_playing()) {

@@ -378,6 +378,9 @@ impl Shell {
             job: transcript::start(span(start, end), next),
             followed: None,
             downloading: false,
+            previous: None,
+            changed_at: std::time::Instant::now(),
+            glide: Default::default(),
         });
         self.read_along_scroll.set_offset(point(px(0.), px(0.)));
     }
@@ -392,7 +395,7 @@ impl Shell {
     }
 
     /// Scrolls the transcript so the spoken line sits in the upper third.
-    pub(crate) fn follow_read_along(&mut self) {
+    pub(crate) fn follow_read_along(&mut self, reduce_motion: bool) {
         let Some(active) = &self.player else {
             return;
         };
@@ -419,8 +422,66 @@ impl Shell {
         // that puts the line 30% down the viewport doesn't depend on the
         // current one.
         let target = viewport.origin.y - item.origin.y + viewport.size.height * 0.3;
-        let lowest = -handle.max_offset().y;
-        handle.set_offset(point(handle.offset().x, target.clamp(lowest, px(0.))));
+        let target = target.clamp(-handle.max_offset().y, px(0.));
+        if reduce_motion {
+            handle.set_offset(point(handle.offset().x, target));
+        } else {
+            // Start from wherever the list is now, so quick line changes
+            // redirect the glide instead of restarting it.
+            read.glide.set(Some(Glide {
+                from: handle.offset().y,
+                to: target,
+                started: std::time::Instant::now(),
+            }));
+        }
+        read.previous = read.followed;
         read.followed = Some(current);
+        read.changed_at = std::time::Instant::now();
+    }
+}
+
+/// How long the transcript takes to glide to the next line.
+pub(crate) const GLIDE: std::time::Duration = std::time::Duration::from_millis(520);
+/// How long the highlight takes to move to the next line.
+pub(crate) const HIGHLIGHT_FADE: std::time::Duration = std::time::Duration::from_millis(260);
+
+/// Ease-in-out cubic: the list is already on screen, so it accelerates
+/// gently and settles instead of snapping.
+pub(crate) fn ease_in_out_cubic(t: f32) -> f32 {
+    let t = t.clamp(0., 1.);
+    if t < 0.5 {
+        4. * t * t * t
+    } else {
+        1. - (-2. * t + 2.).powi(3) / 2.
+    }
+}
+
+/// Linear blend between two colours.
+pub(crate) fn mix(from: gpui_kit::Hsla, to: gpui_kit::Hsla, t: f32) -> gpui_kit::Hsla {
+    let t = t.clamp(0., 1.);
+    gpui_kit::Hsla {
+        h: from.h + (to.h - from.h) * t,
+        s: from.s + (to.s - from.s) * t,
+        l: from.l + (to.l - from.l) * t,
+        a: from.a + (to.a - from.a) * t,
+    }
+}
+
+impl ReadAlong {
+    /// Advances the scroll glide; true while it still needs frames.
+    pub(crate) fn step_glide(&self, handle: &gpui_kit::ScrollHandle) -> bool {
+        let Some(glide) = self.glide.get() else {
+            return false;
+        };
+        let t = glide.started.elapsed().as_secs_f32() / GLIDE.as_secs_f32();
+        let eased = ease_in_out_cubic(t);
+        let y = glide.from + (glide.to - glide.from) * eased;
+        handle.set_offset(point(handle.offset().x, y));
+        if t >= 1. {
+            self.glide.set(None);
+            false
+        } else {
+            true
+        }
     }
 }
