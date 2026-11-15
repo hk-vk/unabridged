@@ -65,6 +65,16 @@ pub enum Error {
         drm_type: String,
     },
 
+    /// A download ended before the expected number of bytes arrived. The
+    /// partial file is kept, so retrying resumes.
+    #[error("download incomplete: {downloaded} of {expected} bytes")]
+    Incomplete {
+        /// Bytes on disk.
+        downloaded: u64,
+        /// Bytes expected.
+        expected: u64,
+    },
+
     /// Any other non-success HTTP status.
     #[error("Audible API error ({status}): {message}")]
     Api {
@@ -130,7 +140,10 @@ impl Error {
     /// Whether retrying the same request later may succeed.
     pub fn is_transient(&self) -> bool {
         match self {
-            Self::Network(_) | Self::RateLimited { .. } | Self::Throttled { .. } => true,
+            Self::Network(_)
+            | Self::RateLimited { .. }
+            | Self::Throttled { .. }
+            | Self::Incomplete { .. } => true,
             Self::Api { status, .. } => *status >= 500,
             _ => false,
         }
