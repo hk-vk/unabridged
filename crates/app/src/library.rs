@@ -29,12 +29,17 @@ impl Shell {
     /// is paused, its position, at most once a minute. Failures keep what is
     /// on screen.
     pub(crate) fn refresh_library(&mut self, cx: &mut Context<Self>) {
-        const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+        // Waiting on a purchase: check whenever the user comes back.
+        let min_interval = std::time::Duration::from_secs(if self.pending_purchase.is_some() {
+            3
+        } else {
+            60
+        });
         if self.refreshing
             || !matches!(self.account, Account::Ready(_))
             || self
                 .library_fetched
-                .is_some_and(|at| at.elapsed() < MIN_INTERVAL)
+                .is_some_and(|at| at.elapsed() < min_interval)
         {
             return;
         }
@@ -65,8 +70,24 @@ impl Shell {
                     && !library.offline
                     && matches!(this.account, Account::Ready(_))
                 {
+                    let bought = this
+                        .pending_purchase
+                        .clone()
+                        .filter(|asin| library.items.iter().any(|item| &item.asin == asin));
                     this.account = Account::Ready(library);
                     this.load_covers(cx);
+                    if let Some(asin) = bought {
+                        this.pending_purchase = None;
+                        let showing = this.page == Page::CatalogBook
+                            && this
+                                .selected_catalog_book
+                                .as_ref()
+                                .is_some_and(|product| product.asin == asin);
+                        if showing {
+                            this.open_book(asin, cx);
+                        }
+                        this.download_notice = Some("Added to your library.".into());
+                    }
                 }
                 if let Some((asin, millis)) = position
                     && let Some(active) = &mut this.player

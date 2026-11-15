@@ -158,16 +158,47 @@ impl Shell {
             .iter()
             .find(|market| market.display_name() == library.marketplace)
             .map(|market| format!("https://www.audible.{}/pd/{}", market.domain(), item.asin));
+        let asin = item.asin.clone();
+        let waiting = self.pending_purchase.as_ref() == Some(&item.asin);
+        let muted = cx.theme().colors.ink_secondary;
         let actions = div()
             .flex()
-            .items_center()
-            .gap(px(10.))
-            .children(url.map(|url| {
-                Button::new("view-on-audible")
-                    .label("View on Audible")
-                    .icon(Icon::External)
-                    .variant(ButtonVariant::Primary)
-                    .on_click(move |_, _, cx| cx.open_url(&url))
+            .flex_col()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .children(url.map(|url| {
+                        Button::new("buy-on-audible")
+                            .label("Buy on Audible")
+                            .icon(Icon::External)
+                            .variant(ButtonVariant::Primary)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.open_url(&url);
+                                this.pending_purchase = Some(asin.clone());
+                                cx.notify();
+                            }))
+                    }))
+                    .children(waiting.then(|| {
+                        Button::new("check-purchase")
+                            .label(if self.refreshing {
+                                "Checking…"
+                            } else {
+                                "I bought it"
+                            })
+                            .icon(Icon::Refresh)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.library_fetched = None;
+                                this.refresh_library(cx);
+                            }))
+                    })),
+            )
+            .children(waiting.then(|| {
+                div().type_style(ui::text::CAPTION).text_color(muted).child(
+                    "Once you buy it, come back here. The book moves to your library on its own.",
+                )
             }));
         self.book_detail(
             "catalog-book-back",

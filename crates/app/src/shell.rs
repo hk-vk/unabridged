@@ -94,6 +94,7 @@ impl Shell {
             loading_player: false,
             library_fetched: None,
             refreshing: false,
+            pending_purchase: None,
             covers: Default::default(),
             covers_pending: Default::default(),
             palettes: Default::default(),
