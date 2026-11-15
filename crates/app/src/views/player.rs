@@ -197,6 +197,7 @@ impl Shell {
             .text_color(palette.on_field)
             .child(
                 div()
+                    .relative()
                     .h(px(52.))
                     .flex_none()
                     .flex()
@@ -204,6 +205,35 @@ impl Shell {
                     .pl(px(84.))
                     .pr(px(20.))
                     .gap(px(10.))
+                    .children(timeline.chapter.as_ref().map(|(index, name)| {
+                        let total = active.chapters.len();
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top_0()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div().max_w(px(if compact { 260. } else { 420. })).child(
+                                    self.chapter_menu(
+                                        "current-chapter-menu",
+                                        Chip::new("current-chapter")
+                                            .label(format!("{name}  ·  {} of {total}", index + 1))
+                                            .icon(Icon::Chapters, palette.on_field_muted)
+                                            .height(ui::metrics::size::POPUP)
+                                            .text(ui::text::BODY_MEDIUM)
+                                            .style(ChipStyle::Tint {
+                                                fill: palette.on_field_track,
+                                                content: palette.on_field,
+                                            }),
+                                        cx,
+                                    ),
+                                ),
+                            )
+                    }))
                     .child(
                         BackLink::new("player-back", self.back_label())
                             .color(palette.on_field_muted)
@@ -390,24 +420,32 @@ impl Shell {
                             .items_center()
                             .gap(px(10.))
                             .child(
-                                Chip::new("full-speed")
-                                    .label(model::format::speed(speed))
-                                    .height(ui::metrics::size::FIELD_PILL)
-                                    .style(field_pill)
-                                    .text(ui::text::BODY_MEDIUM)
-                                    .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
+                                self.speed_menu(
+                                    "full-speed-menu",
+                                    gpui_kit::Anchor::BottomLeft,
+                                    Chip::new("full-speed")
+                                        .label(model::format::speed(speed))
+                                        .height(ui::metrics::size::FIELD_PILL)
+                                        .style(field_pill)
+                                        .text(ui::text::BODY_MEDIUM),
+                                    cx,
+                                ),
                             )
                             .child(
-                                Chip::new("full-sleep")
-                                    .label(self.sleep.chip_label(std::time::Instant::now()))
-                                    .icon(Icon::Moon, palette.on_field)
-                                    .height(ui::metrics::size::FIELD_PILL)
-                                    .style(if matches!(self.sleep, SleepTimer::Off) {
-                                        field_pill_muted
-                                    } else {
-                                        field_pill
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| this.cycle_sleep(cx))),
+                                self.sleep_menu(
+                                    "full-sleep-menu",
+                                    gpui_kit::Anchor::BottomLeft,
+                                    Chip::new("full-sleep")
+                                        .label(self.sleep.chip_label(std::time::Instant::now()))
+                                        .icon(Icon::Moon, palette.on_field)
+                                        .height(ui::metrics::size::FIELD_PILL)
+                                        .style(if matches!(self.sleep, SleepTimer::Off) {
+                                            field_pill_muted
+                                        } else {
+                                            field_pill
+                                        }),
+                                    cx,
+                                ),
                             ),
                     )
                     .child(

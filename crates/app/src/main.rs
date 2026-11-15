@@ -209,6 +209,8 @@ struct Shell {
     /// A catalog book sent to Audible to buy; refreshes look for it.
     pending_purchase: Option<audible::Asin>,
     read_along_open: bool,
+    /// The sleep timer choice behind `sleep`, for the menu's checkmark.
+    sleep_choice: &'static str,
     read_along: Option<ReadAlong>,
     read_along_scroll: gpui_kit::ScrollHandle,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,

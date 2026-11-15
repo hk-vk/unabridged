@@ -6,6 +6,7 @@ mod button;
 mod chip;
 mod controls;
 mod cover;
+mod menu;
 mod navigation;
 mod progress;
 
@@ -13,6 +14,7 @@ pub use button::{BackLink, Button, ButtonShape, ButtonVariant, ClickHandler, Ico
 pub use chip::{Chip, ChipStyle, KeyHint};
 pub use controls::{GroupedList, ListRow, SearchField, Switch, ToggleHandler};
 pub use cover::{Cover, CoverSize};
+pub use menu::MenuTrigger;
 pub use navigation::{
     SIDEBAR_ROW_PADDING, SectionHeader, SidebarHeader, SidebarItem, TOOLBAR_PADDING, Toolbar,
 };

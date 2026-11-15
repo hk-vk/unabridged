@@ -96,6 +96,7 @@ impl Shell {
             refreshing: false,
             pending_purchase: None,
             read_along_open: false,
+            sleep_choice: "Off",
             read_along: None,
             read_along_scroll: Default::default(),
             covers: Default::default(),

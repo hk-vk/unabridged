@@ -244,11 +244,13 @@ impl Shell {
         self.set_sleep(next, cx);
     }
 
-    pub(crate) fn set_sleep(&mut self, choice: &str, cx: &mut Context<Self>) {
+    pub(crate) fn set_sleep(&mut self, choice: &'static str, cx: &mut Context<Self>) {
         let now = std::time::Instant::now();
+        self.sleep_choice = choice;
         self.sleep = match choice {
             "15 minutes" => SleepTimer::Deadline(now + std::time::Duration::from_secs(15 * 60)),
             "30 minutes" => SleepTimer::Deadline(now + std::time::Duration::from_secs(30 * 60)),
+            "45 minutes" => SleepTimer::Deadline(now + std::time::Duration::from_secs(45 * 60)),
             "1 hour" => SleepTimer::Deadline(now + std::time::Duration::from_secs(60 * 60)),
             "End of chapter" => {
                 let chapter = self.player.as_ref().and_then(|active| {
@@ -284,6 +286,13 @@ impl Shell {
     pub(crate) fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
         if let Some(active) = &self.player {
             active.player.set_volume(volume);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_speed(&mut self, speed: f32, cx: &mut Context<Self>) {
+        if let Some(active) = &self.player {
+            active.player.set_rate(speed);
             cx.notify();
         }
     }

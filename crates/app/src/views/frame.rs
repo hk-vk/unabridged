@@ -290,22 +290,27 @@ impl Shell {
                         .flex()
                         .items_center()
                         .gap(px(6.))
+                        .child(self.speed_menu(
+                            "bar-speed-menu",
+                            gpui_kit::Anchor::BottomRight,
+                            Chip::new("bar-speed").label(model::format::speed(speed)),
+                            cx,
+                        ))
                         .child(
-                            Chip::new("bar-speed")
-                                .label(model::format::speed(speed))
-                                .on_click(cx.listener(|this, _, _, cx| this.cycle_speed(cx))),
-                        )
-                        .child(
-                            IconButton::new("bar-sleep", Icon::Moon, 16.)
-                                .hit_area(28.)
-                                .color(if sleeping {
-                                    theme.accent.text
-                                } else {
-                                    theme.colors.ink_secondary
-                                })
-                                .hover_fill(theme.colors.fill)
-                                .tooltip(sleep_tip)
-                                .on_click(cx.listener(|this, _, _, cx| this.cycle_sleep(cx))),
+                            self.sleep_menu(
+                                "bar-sleep-menu",
+                                gpui_kit::Anchor::BottomRight,
+                                IconButton::new("bar-sleep", Icon::Moon, 16.)
+                                    .hit_area(28.)
+                                    .color(if sleeping {
+                                        theme.accent.text
+                                    } else {
+                                        theme.colors.ink_secondary
+                                    })
+                                    .hover_fill(theme.colors.fill)
+                                    .tooltip(sleep_tip),
+                                cx,
+                            ),
                         )
                         .child(
                             IconButton::new("bar-chapters", Icon::Chapters, 16.)
