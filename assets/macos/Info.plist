@@ -6,6 +6,8 @@
 	<string>Better Audible</string>
 	<key>CFBundleExecutable</key>
 	<string>better-audible</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>engineering.better-audible.preview</string>
 	<key>CFBundleName</key>

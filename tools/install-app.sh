@@ -34,8 +34,9 @@ if [ -n "$pid" ] && lsof -p "$pid" 2>/dev/null |
     exit 2
 fi
 
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$root/assets/macos/Info.plist" "$app/Contents/Info.plist"
+cp "$root/assets/macos/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp "$root/target/debug/better-audible" "$binary.new"
 mv -f "$binary.new" "$binary"
 
@@ -46,6 +47,8 @@ else
     codesign --force --deep --sign - "$app"
 fi
 codesign --verify "$app"
+# Make Finder and the Dock pick up a changed icon.
+touch "$app"
 echo "Installed $app"
 
 if [ "${1:-}" = "--relaunch" ]; then
