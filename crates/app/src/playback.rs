@@ -301,3 +301,14 @@ impl Shell {
         }
     }
 }
+
+impl ActivePlayer {
+    /// The current chapter's timeline, or the whole book's.
+    pub(crate) fn timeline(&self) -> Timeline {
+        Timeline::chapter(
+            &self.chapters,
+            self.player.position(),
+            self.player.duration(),
+        )
+    }
+}

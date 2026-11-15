@@ -148,27 +148,13 @@ impl Shell {
             let title = active.title.clone();
             let image = self.covers.get(&active.asin).cloned();
             let playing = active.player.is_playing();
-            let position = active.player.position().max(0.);
-            let duration = active.player.duration().max(0.);
-            let fraction = if duration > 0. {
-                (position / duration).clamp(0., 1.) as f32
-            } else {
-                0.
-            };
-            let elapsed = model::format::clock(std::time::Duration::from_secs(position as u64));
-            let remaining = model::format::countdown(std::time::Duration::from_secs(
-                (duration - position).max(0.) as u64,
-            ));
+            // Time and scrubber follow the current chapter, like the full player.
+            let timeline = active.timeline();
+            let fraction = timeline.fraction();
+            let elapsed = model::format::clock(timeline.elapsed());
+            let remaining = model::format::countdown(timeline.remaining());
             let speed = active.player.rate();
-            let subtitle = current_chapter(&active.chapters, (position * 1000.) as u64)
-                .map(|(index, chapter)| {
-                    if chapter.title.is_empty() {
-                        format!("Chapter {}", index + 1)
-                    } else {
-                        chapter.title.clone()
-                    }
-                })
-                .unwrap_or_else(|| "Now playing".into());
+            let subtitle = timeline.chapter_name().unwrap_or("Now playing").to_string();
             let sleeping = !matches!(self.sleep, SleepTimer::Off);
             let sleep_tip = if sleeping {
                 self.sleep.label(std::time::Instant::now())
@@ -178,7 +164,8 @@ impl Shell {
             let weak = cx.entity().downgrade();
             let scrubber = Scrubber::new("bar-seek", fraction, ScrubberColors::window(cx)).on_seek(
                 move |value, _, cx| {
-                    let _ = weak.update(cx, |this, cx| this.seek_fraction(value, cx));
+                    let target = timeline.book_fraction(value);
+                    let _ = weak.update(cx, |this, cx| this.seek_fraction(target, cx));
                 },
             );
             div()

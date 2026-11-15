@@ -61,39 +61,22 @@ impl Render for MiniPlayer {
             .theme()
             .book_palette(shell.palettes.get(&active.asin).copied());
         let playing = active.player.is_playing();
-        let position = active.player.position().max(0.);
-        let duration = active.player.duration().max(0.);
-        let fraction = if duration > 0. {
-            (position / duration).clamp(0., 1.) as f32
+        // The chapter by default; a click on the time switches to the whole book.
+        let chapter_timeline = active.timeline();
+        let has_chapter = chapter_timeline.chapter.is_some();
+        let subtitle = chapter_timeline
+            .chapter_name()
+            .unwrap_or("Now playing")
+            .to_string();
+        let book_time = shell.mini_book_time || !has_chapter;
+        let timeline = if book_time {
+            Timeline::book(active.player.position(), active.player.duration())
         } else {
-            0.
+            chapter_timeline
         };
-        let chapter = current_chapter(&active.chapters, (position * 1000.) as u64);
-        let subtitle = chapter
-            .map(|(index, chapter)| {
-                if chapter.title.is_empty() {
-                    format!("Chapter {}", index + 1)
-                } else {
-                    chapter.title.clone()
-                }
-            })
-            .unwrap_or_else(|| "Now playing".into());
-        // Time left in the chapter by default; a click switches to the book.
-        let book_time = shell.mini_book_time || chapter.is_none();
-        let end = match chapter {
-            Some((_, chapter)) if !book_time => {
-                (chapter.start_offset_ms.saturating_add(chapter.length_ms) as f64 / 1000.)
-                    .min(duration)
-            }
-            _ => duration,
-        };
-        let left = format!(
-            "{} left",
-            model::format::clock(std::time::Duration::from_secs(
-                (end - position).max(0.) as u64
-            ))
-        );
-        let left_tip = match (chapter.is_some(), book_time) {
+        let fraction = timeline.fraction();
+        let left = format!("{} left", model::format::clock(timeline.remaining()));
+        let left_tip = match (has_chapter, book_time) {
             (false, _) => "Time left in the book",
             (true, false) => "Time left in this chapter. Click for the book",
             (true, true) => "Time left in the book. Click for this chapter",
@@ -113,7 +96,8 @@ impl Render for MiniPlayer {
         )
         .thickness(4., 10.)
         .on_seek(move |value, _, cx| {
-            let _ = seek_shell.update(cx, |shell, cx| shell.seek_fraction(value, cx));
+            let target = timeline.book_fraction(value);
+            let _ = seek_shell.update(cx, |shell, cx| shell.seek_fraction(target, cx));
         });
         // Each control talks to the main window's shell.
         let on_shell = |action: fn(&mut Shell, &mut Context<Shell>)| {

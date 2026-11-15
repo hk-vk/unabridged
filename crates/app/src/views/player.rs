@@ -29,43 +29,19 @@ impl Shell {
         let palette = cx
             .theme()
             .book_palette(self.palettes.get(&active.asin).copied());
-        let position = active.player.position().max(0.);
-        let duration = active.player.duration().max(0.);
-        let chapter = current_chapter(&active.chapters, (position * 1000.) as u64);
-        let (timeline_start, timeline_end, caption) = if let Some((index, chapter)) = chapter {
-            let start = chapter.start_offset_ms as f64 / 1000.;
-            let end = (chapter.start_offset_ms.saturating_add(chapter.length_ms) as f64 / 1000.)
-                .min(duration);
-            let name = if chapter.title.is_empty() {
-                format!("Chapter {}", index + 1)
-            } else {
-                chapter.title.clone()
-            };
-            (
-                start,
-                end.max(start),
-                format!(
-                    "left in {name}, chapter {} of {}",
-                    index + 1,
-                    active.chapters.len()
-                ),
-            )
-        } else {
-            (0., duration, "left in this book".to_string())
+        let timeline = active.timeline();
+        let caption = match &timeline.chapter {
+            Some((index, name)) => format!(
+                "left in {name}, chapter {} of {}",
+                index + 1,
+                active.chapters.len()
+            ),
+            None => "left in this book".to_string(),
         };
-        let segment_length = (timeline_end - timeline_start).max(0.);
-        let elapsed = (position - timeline_start).clamp(0., segment_length);
-        let remaining = (segment_length - elapsed).max(0.) as u64;
-        let fraction = if segment_length > 0. {
-            (elapsed / segment_length).clamp(0., 1.) as f32
-        } else {
-            0.
-        };
-        let time = model::format::clock(std::time::Duration::from_secs(elapsed as u64));
-        let book_left = model::format::book_left_long(std::time::Duration::from_secs(
-            (duration - position).max(0.) as u64,
-        ));
-        let left = model::format::clock(std::time::Duration::from_secs(remaining));
+        let fraction = timeline.fraction();
+        let time = model::format::clock(timeline.elapsed());
+        let book_left = model::format::book_left_long(timeline.book_remaining());
+        let left = model::format::clock(timeline.remaining());
         let playing = active.player.is_playing();
         let speed = active.player.rate();
         let title = active.title.clone();
@@ -75,13 +51,12 @@ impl Shell {
             fraction,
             ScrubberColors::field(&palette, true),
         )
-        .on_seek(move |value, _, cx| {
-            let book_fraction = if duration > 0. {
-                ((timeline_start + segment_length * f64::from(value)) / duration) as f32
-            } else {
-                0.
-            };
-            let _ = weak.update(cx, |this, cx| this.seek_fraction(book_fraction, cx));
+        .on_seek({
+            let timeline = timeline.clone();
+            move |value, _, cx| {
+                let target = timeline.book_fraction(value);
+                let _ = weak.update(cx, |this, cx| this.seek_fraction(target, cx));
+            }
         });
         let chapter_panel = if self.chapters_open {
             let message = if active.chapters_loading {
@@ -118,8 +93,8 @@ impl Shell {
                     chapter.title.clone()
                 };
                 let start = chapter.start_offset_ms as f64 / 1000.;
-                let target = if duration > 0. {
-                    (start / duration).clamp(0., 1.) as f32
+                let target = if timeline.duration > 0. {
+                    (start / timeline.duration).clamp(0., 1.) as f32
                 } else {
                     0.
                 };

@@ -96,3 +96,109 @@ pub(crate) fn current_chapter(
             && position_ms < chapter.start_offset_ms.saturating_add(chapter.length_ms)
     })
 }
+
+/// Where playback sits on its timeline: the current chapter when chapters are
+/// known, otherwise the whole book. Every player surface reads time and
+/// scrubber position from this, so they agree.
+#[derive(Clone, Debug)]
+pub(crate) struct Timeline {
+    /// Start of the span, in seconds into the book.
+    pub start: f64,
+    /// End of the span, in seconds into the book.
+    pub end: f64,
+    /// Playback position, in seconds into the book.
+    pub position: f64,
+    /// Book length in seconds.
+    pub duration: f64,
+    /// Zero-based chapter index and display name, when the span is a chapter.
+    pub chapter: Option<(usize, String)>,
+}
+
+impl Timeline {
+    /// The chapter containing `position`, or the whole book.
+    pub(crate) fn chapter(
+        chapters: &[audible::models::Chapter],
+        position: f64,
+        duration: f64,
+    ) -> Self {
+        let position = position.max(0.);
+        let duration = duration.max(0.);
+        match current_chapter(chapters, (position * 1000.) as u64) {
+            Some((index, chapter)) => {
+                let start = chapter.start_offset_ms as f64 / 1000.;
+                let end = (chapter.start_offset_ms.saturating_add(chapter.length_ms) as f64
+                    / 1000.)
+                    .min(duration)
+                    .max(start);
+                let name = if chapter.title.is_empty() {
+                    format!("Chapter {}", index + 1)
+                } else {
+                    chapter.title.clone()
+                };
+                Self {
+                    start,
+                    end,
+                    position,
+                    duration,
+                    chapter: Some((index, name)),
+                }
+            }
+            None => Self::book(position, duration),
+        }
+    }
+
+    /// The whole book.
+    pub(crate) fn book(position: f64, duration: f64) -> Self {
+        let duration = duration.max(0.);
+        Self {
+            start: 0.,
+            end: duration,
+            position: position.clamp(0., duration),
+            duration,
+            chapter: None,
+        }
+    }
+
+    fn length(&self) -> f64 {
+        (self.end - self.start).max(0.)
+    }
+
+    /// Seconds played in the span.
+    pub(crate) fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::from_secs((self.position - self.start).clamp(0., self.length()) as u64)
+    }
+
+    /// Seconds left in the span.
+    pub(crate) fn remaining(&self) -> std::time::Duration {
+        std::time::Duration::from_secs((self.end - self.position).clamp(0., self.length()) as u64)
+    }
+
+    /// Seconds left in the whole book.
+    pub(crate) fn book_remaining(&self) -> std::time::Duration {
+        std::time::Duration::from_secs((self.duration - self.position).max(0.) as u64)
+    }
+
+    /// Scrubber position within the span (0..=1).
+    pub(crate) fn fraction(&self) -> f32 {
+        let length = self.length();
+        if length > 0. {
+            ((self.position - self.start) / length).clamp(0., 1.) as f32
+        } else {
+            0.
+        }
+    }
+
+    /// Converts a scrubber position in the span to a fraction of the book.
+    pub(crate) fn book_fraction(&self, value: f32) -> f32 {
+        if self.duration > 0. {
+            ((self.start + self.length() * f64::from(value.clamp(0., 1.))) / self.duration) as f32
+        } else {
+            0.
+        }
+    }
+
+    /// The chapter's name, if the span is a chapter.
+    pub(crate) fn chapter_name(&self) -> Option<&str> {
+        self.chapter.as_ref().map(|(_, name)| name.as_str())
+    }
+}

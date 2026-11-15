@@ -326,6 +326,41 @@ mod download_tests {
     }
 
     #[test]
+    fn timeline_follows_the_current_chapter_and_maps_seeks_back_to_the_book() {
+        let chapters = vec![
+            audible::models::Chapter {
+                title: String::new(),
+                start_offset_ms: 0,
+                length_ms: 100_000,
+                chapters: vec![],
+            },
+            audible::models::Chapter {
+                title: "Two".into(),
+                start_offset_ms: 100_000,
+                length_ms: 300_000,
+                chapters: vec![],
+            },
+        ];
+        let timeline = Timeline::chapter(&chapters, 175., 400.);
+        assert_eq!(timeline.chapter_name(), Some("Two"));
+        assert_eq!(timeline.elapsed().as_secs(), 75);
+        assert_eq!(timeline.remaining().as_secs(), 225);
+        assert_eq!(timeline.book_remaining().as_secs(), 225);
+        assert!((timeline.fraction() - 0.25).abs() < 1e-6);
+        // Half way through chapter two is 250 s into a 400 s book.
+        assert!((timeline.book_fraction(0.5) - 0.625).abs() < 1e-6);
+        assert_eq!(
+            Timeline::chapter(&chapters, 10., 400.).chapter_name(),
+            Some("Chapter 1")
+        );
+        // Without chapters the span is the whole book.
+        let book = Timeline::chapter(&[], 100., 400.);
+        assert!(book.chapter.is_none());
+        assert!((book.fraction() - 0.25).abs() < 1e-6);
+        assert!((book.book_fraction(0.5) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
     fn progress_is_stage_specific_and_unknown_totals_stay_indeterminate() {
         assert_eq!(download_display(DownloadEvent::Licensing).2, None);
         let (_, detail, fraction) = download_display(DownloadEvent::Downloading(Progress {
