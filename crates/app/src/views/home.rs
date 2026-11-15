@@ -291,19 +291,13 @@ impl Shell {
                 format!("{}, read by {narrator}", item.author_names())
             };
             let cover = self.covers.get(&item.asin).cloned();
-            let sentence = item
+            // Progress is shown as a bar with a quiet caption, not a sentence.
+            let percent = book_progress(item).unwrap_or(0.);
+            let left = item
                 .listening_status
                 .as_ref()
                 .and_then(|status| status.time_remaining_seconds)
-                .map(|seconds| {
-                    format!(
-                        "{}.",
-                        model::format::book_left_long(std::time::Duration::from_secs(seconds))
-                    )
-                })
-                .or_else(|| {
-                    book_progress(item).map(|percent| format!("{percent:.0}% of the way through."))
-                });
+                .map(|seconds| model::format::time_left(std::time::Duration::from_secs(seconds)));
             view = view.child(
                 div()
                     .flex()
@@ -353,12 +347,24 @@ impl Shell {
                                     .text_color(color)
                                     .child(credit),
                             )
-                            .children(sentence.map(|sentence| {
+                            .child(
                                 div()
-                                    .mt(px(18.))
-                                    .type_style(ui::text::BOOK_SENTENCE)
-                                    .child(sentence)
-                            }))
+                                    .mt(px(20.))
+                                    .w(px(320.))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(8.))
+                                    .child(SegmentedProgress::new(0., (percent / 100.) as f32, 0.))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .justify_between()
+                                            .type_style(ui::text::CAPTION.tabular())
+                                            .text_color(color)
+                                            .child(format!("{percent:.0}%"))
+                                            .children(left),
+                                    ),
+                            )
                             .child(
                                 div()
                                     .mt(px(20.))
