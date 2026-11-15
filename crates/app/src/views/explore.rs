@@ -26,12 +26,15 @@ impl Shell {
                             )),
                         ),
                 )
-                .children(self.search_message.iter().map(|message| {
+                .child(if self.searching {
+                    loading_placeholders(self.search_message.clone().unwrap_or_default(), cx)
+                } else {
                     div()
                         .type_style(ui::text::BODY)
                         .text_color(color)
-                        .child(message.clone())
-                }))
+                        .children(self.search_message.clone())
+                        .into_any_element()
+                })
                 .children(self.search_results.iter().map(|item| {
                     let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
                     let image = self.covers.get(&item.asin).cloned();

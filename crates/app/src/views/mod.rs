@@ -32,7 +32,7 @@ pub(crate) fn page_base() -> gpui_kit::Div {
 }
 
 pub(crate) fn loading_placeholders(
-    label: &'static str,
+    label: impl Into<gpui_kit::SharedString>,
     cx: &Context<Shell>,
 ) -> gpui_kit::AnyElement {
     let reduced_motion = cx.reduce_motion();

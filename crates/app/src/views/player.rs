@@ -59,11 +59,7 @@ impl Shell {
             }
         });
         let chapter_panel = if self.chapters_open {
-            let message = if active.chapters_loading {
-                "Loading chapters…"
-            } else {
-                "Chapters unavailable for this book."
-            };
+            let message = "Chapters unavailable for this book.";
             let mut panel = div()
                 .id("chapter-list")
                 .w(px(chapter_width))
@@ -77,7 +73,42 @@ impl Shell {
                 .flex_col()
                 .gap(px(4.))
                 .child(div().type_style(ui::text::GROUP_TITLE).child("Chapters"));
-            if active.chapters.is_empty() {
+            if active.chapters_loading && active.chapters.is_empty() {
+                let reduced_motion = cx.reduce_motion();
+                for index in 0_usize..8 {
+                    let width = [180., 140., 200., 160.][index % 4];
+                    panel = panel.child(
+                        div()
+                            .id(("chapter-loading", index))
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .py(px(10.))
+                            .px(px(8.))
+                            .child(if reduced_motion {
+                                div()
+                                    .w(px(width))
+                                    .h(px(12.))
+                                    .rounded(px(6.))
+                                    .bg(palette.on_field_track)
+                                    .into_any_element()
+                            } else {
+                                Skeleton::new()
+                                    .w(px(width))
+                                    .h(px(12.))
+                                    .rounded(px(6.))
+                                    .into_any_element()
+                            })
+                            .child(
+                                div()
+                                    .w(px(40.))
+                                    .h(px(12.))
+                                    .rounded(px(6.))
+                                    .bg(palette.on_field_track),
+                            ),
+                    );
+                }
+            } else if active.chapters.is_empty() {
                 panel = panel.child(
                     div()
                         .mt(px(12.))
