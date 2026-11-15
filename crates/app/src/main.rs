@@ -1303,8 +1303,9 @@ impl Shell {
                 gpui_kit::base::animation::EffectTransition::new(std::time::Duration::from_millis(
                     140,
                 ))
+                .slide_x(px(10.), px(0.))
                 .fade(0.90, 1.0)
-                .apply(panel, "chapter-panel-enter")
+                .apply(panel.relative(), "chapter-panel-enter")
                 .into_any_element()
             };
             Some(panel)
@@ -1552,14 +1553,15 @@ impl Shell {
                             .child(div().w(px(100.)).child(volume_control)),
                     ),
             );
-        // Opacity-only transition keeps spatial motion out of reduced-motion mode.
+        // The player rises into place; reduced motion shows it immediately.
         if cx.reduce_motion() {
             return stage.into_any_element();
         }
-        gpui_kit::base::animation::EffectTransition::new(std::time::Duration::from_millis(160))
-            .fade(0.92, 1.0)
+        gpui_kit::base::animation::EffectTransition::new(std::time::Duration::from_millis(220))
+            .slide_y(px(12.), px(0.))
+            .fade(0.88, 1.0)
             .apply(
-                stage,
+                stage.relative(),
                 format!("player-enter-{}", self.navigation_generation),
             )
             .into_any_element()
@@ -2279,10 +2281,11 @@ impl Render for Shell {
         let content = div().w_full().child(self.account_view(window, cx));
         let content = if matches!(self.page, Page::Book | Page::CatalogBook) && !cx.reduce_motion()
         {
-            gpui_kit::base::animation::EffectTransition::new(std::time::Duration::from_millis(140))
-                .fade(0.92, 1.0)
+            gpui_kit::base::animation::EffectTransition::new(std::time::Duration::from_millis(180))
+                .slide_y(px(8.), px(0.))
+                .fade(0.90, 1.0)
                 .apply(
-                    content,
+                    content.relative(),
                     format!("book-enter-{}", self.navigation_generation),
                 )
                 .into_any_element()
