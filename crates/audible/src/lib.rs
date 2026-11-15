@@ -23,6 +23,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod client;
 pub mod credentials;
 mod crypto;
 pub mod download;
@@ -33,6 +34,7 @@ pub mod locale;
 pub mod models;
 pub mod signing;
 
+pub use client::{Audible, AudibleClient, DownloadEvent, DownloadRequest, DownloadedBook};
 pub use error::{Error, Result};
 pub use locale::{Endpoints, Marketplace};
 pub use models::Asin;

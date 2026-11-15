@@ -14,7 +14,7 @@
 //! [`crate::Error::UnsupportedDrm`].
 
 mod aax;
-mod convert;
+pub(crate) mod convert;
 mod decrypter;
 mod keys;
 mod mp4;
