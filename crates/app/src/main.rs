@@ -2,6 +2,7 @@
 mod backend;
 mod mini_player;
 mod player;
+mod region;
 mod settings;
 
 use audible::{Marketplace, auth::LoginSession};
@@ -189,6 +190,7 @@ struct Shell {
     sleep_select: Entity<SelectState<SearchableVec<&'static str>>>,
     account: Account,
     marketplace: Entity<SelectState<SearchableVec<&'static str>>>,
+    suggested_marketplace: Option<Marketplace>,
     redirect: Entity<InputState>,
     search: Entity<InputState>,
     library_search: Entity<InputState>,
@@ -265,7 +267,15 @@ impl Shell {
                 .map(|m| m.display_name())
                 .collect::<Vec<_>>(),
         );
-        let marketplace = cx.new(|cx| SelectState::new(marketplaces, None, window, cx));
+        let suggested_marketplace = region::suggested_marketplace();
+        let selected = suggested_marketplace
+            .and_then(|suggestion| {
+                Marketplace::ALL
+                    .iter()
+                    .position(|market| *market == suggestion)
+            })
+            .map(gpui_kit::component::IndexPath::new);
+        let marketplace = cx.new(|cx| SelectState::new(marketplaces, selected, window, cx));
         let mut shell = Self {
             page: Page::Library,
             main_window: Some(window.window_handle()),
@@ -284,6 +294,7 @@ impl Shell {
             sleep_select,
             account: Account::Loading,
             marketplace,
+            suggested_marketplace,
             redirect,
             search,
             library_search,
@@ -1697,6 +1708,7 @@ impl Shell {
                 .child(div().flex().gap(px(12.))
                     .child(div().w(px(220.)).child(Select::new(&self.marketplace).placeholder("Choose marketplace").accessibility_label("Audible marketplace")))
                     .child(Button::new("sign-in").label("Sign in with Amazon").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.begin_sign_in(cx)))))
+                .children(self.suggested_marketplace.map(|market| copy(format!("Suggested {} from your Mac’s region. You can choose a different marketplace.", market.display_name()))))
                 .children(self.download_notice.iter().map(|message| copy(message.clone())))
                 .into_any_element(),
             Account::SigningIn(_) => base().child(heading("Finish signing in"))
