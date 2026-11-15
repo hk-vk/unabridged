@@ -11,7 +11,7 @@ use gpui_kit::{
         input::{Input, InputState},
         select::{SearchableVec, Select, SelectState},
     },
-    div, point, px, size,
+    div, point, px, relative, size,
 };
 use ui::{
     ActiveTheme, Elevation, ElevationExt, Icon, ThemeSettings,
@@ -25,6 +25,7 @@ enum Page {
     Library,
     Progress,
     Explore,
+    OnThisMac,
 }
 
 enum Account {
@@ -34,6 +35,50 @@ enum Account {
     Ready(backend::Library),
     Error(String),
 }
+struct ActiveDownload {
+    asin: audible::Asin,
+    title: String,
+    event: std::sync::Arc<std::sync::Mutex<audible::DownloadEvent>>,
+}
+
+fn download_display(event: audible::DownloadEvent) -> (&'static str, String, Option<f32>) {
+    fn megabytes(bytes: u64) -> f64 {
+        bytes as f64 / 1_000_000.0
+    }
+    match event {
+        audible::DownloadEvent::Licensing => (
+            "Preparing download",
+            "Requesting the book from Audible".into(),
+            None,
+        ),
+        audible::DownloadEvent::Downloading(progress) => {
+            let amount = match progress.total {
+                Some(total) if total > 0 => {
+                    format!(
+                        "{:.1} of {:.1} MB",
+                        megabytes(progress.downloaded),
+                        megabytes(total)
+                    )
+                }
+                _ => format!("{:.1} MB downloaded", megabytes(progress.downloaded)),
+            };
+            let fraction = progress.fraction().map(|value| value as f32);
+            let detail = fraction.map_or(amount.clone(), |value| {
+                format!("{:.0}% · {amount}", value * 100.)
+            });
+            ("Downloading", detail, fraction)
+        }
+        audible::DownloadEvent::Decrypting(progress) => {
+            let fraction = progress.fraction().map(|value| value as f32);
+            let detail = fraction.map_or_else(
+                || "Finishing the audio file".into(),
+                |value| format!("{:.0}% · Finishing the audio file", value * 100.),
+            );
+            ("Preparing audio", detail, fraction)
+        }
+    }
+}
+
 struct ActivePlayer {
     asin: audible::Asin,
     account_key: String,
@@ -52,7 +97,7 @@ struct Shell {
     searching: bool,
     search_message: Option<String>,
     download_notice: Option<String>,
-    downloading: bool,
+    download: Option<ActiveDownload>,
     player: Option<ActivePlayer>,
     loading_player: bool,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,
@@ -82,7 +127,7 @@ impl Shell {
             searching: false,
             search_message: None,
             download_notice: None,
-            downloading: false,
+            download: None,
             player: None,
             loading_player: false,
             covers: Default::default(),
@@ -96,6 +141,9 @@ impl Shell {
                     .await;
                 if this
                     .update(cx, |this, cx| {
+                        if this.download.is_some() {
+                            cx.notify();
+                        }
                         let ended = this
                             .player
                             .as_ref()
@@ -281,18 +329,23 @@ impl Shell {
         title: String,
         cx: &mut Context<Self>,
     ) {
-        if self.downloading {
+        if self.download.is_some() {
             return;
         }
-        self.downloading = true;
-        self.download_notice = Some(format!("Downloading {title}…"));
+        let event = std::sync::Arc::new(std::sync::Mutex::new(audible::DownloadEvent::Licensing));
+        self.download = Some(ActiveDownload {
+            asin: asin.clone(),
+            title: title.clone(),
+            event: event.clone(),
+        });
+        self.download_notice = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { backend::download(&key, asin) })
+                .background_spawn(async move { backend::download(&key, asin, event) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.downloading = false;
+                this.download = None;
                 this.download_notice = Some(match result {
                     Ok(_) => format!("{title} is downloaded to this Mac."),
                     Err(error) => format!("Download failed: {error}"),
@@ -492,14 +545,17 @@ impl Shell {
                                     .child(div().text_size(px(13.)).text_color(color).child(item.author_names())))
                         })).into_any_element();
                 }
-                let items: Vec<_> = library.items.iter().filter(|item| self.page != Page::Progress || (item.percent_complete.unwrap_or(0.) > 0. && item.is_finished != Some(true))).collect();
+                let items: Vec<_> = library.items.iter().filter(|item| match self.page {
+                    Page::Progress => item.percent_complete.unwrap_or(0.) > 0. && item.is_finished != Some(true),
+                    Page::OnThisMac => backend::downloaded_path(&library.account_key, &item.asin).is_some() || self.download.as_ref().is_some_and(|download| download.asin == item.asin),
+                    _ => true,
+                }).collect();
                 if items.is_empty() {
-                    return base().child(heading(if self.page == Page::Progress { "Nothing in progress" } else { "Your library is empty" }))
-                        .child(copy("Your Audible library has synced.".into())).into_any_element();
+                    return base().child(heading(match self.page { Page::Progress => "Nothing in progress", Page::OnThisMac => "No downloads yet", _ => "Your library is empty" }))
+                        .child(copy(if self.page == Page::OnThisMac { "Download a title from your library to listen on this Mac.".into() } else { "Your Audible library has synced.".into() })).into_any_element();
                 }
                 div().flex().flex_col().gap(px(16.))
                     .child(div().text_size(px(13.)).text_color(color).child(format!("{} titles", items.len())))
-                    .children(self.download_notice.iter().map(|message| div().text_size(px(13.)).text_color(color).child(message.clone())))
                     .children(items.into_iter().map(|item| {
                         let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
                         let author = item.author_names();
@@ -507,7 +563,11 @@ impl Shell {
                         let asin = item.asin.clone();
                         let key = library.account_key.clone();
                         let button_id = format!("download-{}", asin);
-                        let downloaded = backend::downloaded_path(&key, &asin).is_some();
+                        let local_path = backend::downloaded_path(&key, &asin);
+                        let downloaded = local_path.is_some();
+                        let active = self.download.as_ref().filter(|download| download.asin == asin);
+                        let active_stage = active.map(|download| download.event.lock().map(|event| download_display(*event).0).unwrap_or("Preparing download"));
+                        let other_download = self.download.is_some() && active.is_none();
                         let download_title = title.clone();
                         let progress = item.percent_complete.map(|v| format!("{v:.0}% complete")).unwrap_or_else(|| "Not started".into());
                         div().flex().items_center().gap(px(20.)).pb(px(16.)).border_b_1().border_color(hairline)
@@ -516,7 +576,21 @@ impl Shell {
                                 .child(div().font_family("Literata").text_size(px(19.)).child(title))
                                 .child(div().text_size(px(13.)).text_color(color).child(author)))
                             .child(div().text_size(px(13.)).text_color(color).child(progress))
-                            .child(if downloaded { Button::new(button_id).label("Play").icon(Icon::Play).on_click(cx.listener(move |this, _, _, cx| this.start_player(key.clone(), asin.clone(), download_title.clone(), cx))).into_any_element() } else { Button::new(button_id).label("Download").on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), download_title.clone(), cx))).into_any_element() })
+                            .child(if let Some(stage) = active_stage {
+                                div().text_size(px(13.)).text_color(color).child(format!("{stage}…")).into_any_element()
+                            } else if downloaded {
+                                div().flex().items_center().gap(px(8.))
+                                    .child(Button::new(format!("reveal-{asin}")).label("Show in Finder").on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(path) = &local_path && let Err(error) = std::process::Command::new("open").arg("-R").arg(path).spawn() {
+                                            this.download_notice = Some(format!("Could not open Finder: {error}")); cx.notify();
+                                        }
+                                    })))
+                                    .child(Button::new(button_id).label("Play").icon(Icon::Play).on_click(cx.listener(move |this, _, _, cx| this.start_player(key.clone(), asin.clone(), download_title.clone(), cx)))).into_any_element()
+                            } else if other_download {
+                                div().text_size(px(12.)).text_color(color).child("One download at a time").into_any_element()
+                            } else {
+                                Button::new(button_id).label("Download").on_click(cx.listener(move |this, _, _, cx| this.download(key.clone(), asin.clone(), download_title.clone(), cx))).into_any_element()
+                            })
                     })).into_any_element()
             }
         }
@@ -530,6 +604,7 @@ impl Render for Shell {
             Page::Library => "Library",
             Page::Progress => "In progress",
             Page::Explore => "Explore",
+            Page::OnThisMac => "On this Mac",
         };
         let account_label = match &self.account {
             Account::Ready(library) => format!(
@@ -539,6 +614,105 @@ impl Render for Shell {
             ),
             _ => "Not connected".into(),
         };
+        let notice =
+            if matches!(self.account, Account::Ready(_)) {
+                self.download_notice.as_ref().map(|message| {
+                    div()
+                        .mx(px(36.))
+                        .mt(px(12.))
+                        .px(px(16.))
+                        .py(px(10.))
+                        .rounded(px(10.))
+                        .bg(theme.colors.fill)
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(13.))
+                                .text_color(theme.colors.ink)
+                                .child(message.clone()),
+                        )
+                        .child(Button::new("dismiss-status").label("Dismiss").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.download_notice = None;
+                                cx.notify();
+                            }),
+                        ))
+                        .into_any_element()
+                })
+            } else {
+                None
+            };
+        let download_panel = self.download.as_ref().map(|download| {
+            let event = download
+                .event
+                .lock()
+                .map(|event| *event)
+                .unwrap_or(audible::DownloadEvent::Licensing);
+            let (stage, detail, fraction) = download_display(event);
+            let title = download.title.clone();
+            let mut track = div()
+                .w_full()
+                .h(px(4.))
+                .rounded_full()
+                .bg(theme.colors.hairline);
+            if let Some(fraction) = fraction {
+                track = track.child(
+                    div()
+                        .h_full()
+                        .w(relative(fraction))
+                        .rounded_full()
+                        .bg(theme.accent.fill),
+                );
+            }
+            div()
+                .mx(px(36.))
+                .mt(px(12.))
+                .px(px(16.))
+                .py(px(12.))
+                .rounded(px(10.))
+                .bg(theme.accent.tint)
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.))
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                        .text_color(theme.accent.on_tint)
+                                        .child(format!("{stage} · {title}")),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.colors.ink_secondary)
+                                        .child(detail),
+                                ),
+                        )
+                        .child(Button::new("view-downloads").label("On this Mac").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.page = Page::OnThisMac;
+                                cx.notify();
+                            }),
+                        )),
+                )
+                .child(track)
+                .into_any_element()
+        });
         let bar = self.player.as_ref().map(|active| {
             let title = active.title.clone();
             let playing = active.player.is_playing();
@@ -621,6 +795,7 @@ impl Render for Shell {
                     .child(SidebarHeader::new("Your library"))
                     .child(self.nav("Library", Icon::Library, Page::Library, cx))
                     .child(self.nav("In progress", Icon::Clock, Page::Progress, cx))
+                    .child(self.nav("On this Mac", Icon::Download, Page::OnThisMac, cx))
                     .child(div().flex_1())
                     .child(
                         div()
@@ -639,6 +814,8 @@ impl Render for Shell {
                     .flex()
                     .flex_col()
                     .child(Toolbar::new(title))
+                    .children(download_panel)
+                    .children(notice)
                     .child(
                         div()
                             .id("content")
@@ -690,4 +867,33 @@ fn main() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod download_tests {
+    use super::*;
+    use audible::{DownloadEvent, download::Progress};
+
+    #[test]
+    fn progress_is_stage_specific_and_unknown_totals_stay_indeterminate() {
+        assert_eq!(download_display(DownloadEvent::Licensing).2, None);
+        let (_, detail, fraction) = download_display(DownloadEvent::Downloading(Progress {
+            downloaded: 1_000_000,
+            total: Some(4_000_000),
+        }));
+        assert_eq!(fraction, Some(0.25));
+        assert_eq!(detail, "25% · 1.0 of 4.0 MB");
+        let (_, detail, fraction) = download_display(DownloadEvent::Downloading(Progress {
+            downloaded: 2_000_000,
+            total: None,
+        }));
+        assert_eq!(fraction, None);
+        assert_eq!(detail, "2.0 MB downloaded");
+        let (stage, _, fraction) = download_display(DownloadEvent::Decrypting(Progress {
+            downloaded: 50,
+            total: Some(100),
+        }));
+        assert_eq!(stage, "Preparing audio");
+        assert_eq!(fraction, Some(0.5));
+    }
 }

@@ -108,14 +108,23 @@ pub fn downloaded_path(key: &str, asin: &audible::Asin) -> Option<std::path::Pat
         .find(|path| path.is_file())
 }
 
-pub fn download(key: &str, asin: audible::Asin) -> anyhow::Result<std::path::PathBuf> {
+pub fn download(
+    key: &str,
+    asin: audible::Asin,
+    progress: Arc<std::sync::Mutex<audible::DownloadEvent>>,
+) -> anyhow::Result<std::path::PathBuf> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     let _guard = rt.enter();
     let client = Audible::from_store(store()?, PROFILE)?
         .ok_or_else(|| anyhow::anyhow!("Sign in to download books"))?;
-    let request = audible::DownloadRequest::new(asin, account_directory(key)?.join("Books"));
+    let mut request = audible::DownloadRequest::new(asin, account_directory(key)?.join("Books"));
+    request.progress = Some(Arc::new(move |event| {
+        if let Ok(mut current) = progress.lock() {
+            *current = event;
+        }
+    }));
     Ok(rt.block_on(client.download_book(request))?.path)
 }
 

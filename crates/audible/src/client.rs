@@ -393,11 +393,38 @@ impl Audible {
         key: &DecryptionKey,
         request: &DownloadRequest,
     ) -> Result<()> {
+        request.emit(DownloadEvent::Decrypting(Progress {
+            downloaded: 0,
+            total: None,
+        }));
         let progress = request.progress.clone().map(|cb| {
             Arc::new(move |p: Progress| cb(DownloadEvent::Decrypting(p)))
                 as crate::download::ProgressCallback
         });
-        self.decrypter.decrypt(input, output, key, progress).await?;
+        // Never publish a partly decrypted file under its playable name. The
+        // temporary file stays on the same filesystem for an atomic rename.
+        static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let stem = output
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let temporary = output.with_file_name(format!(
+            ".{stem}.{}.{sequence}.partial.m4b",
+            std::process::id()
+        ));
+        if let Err(error) = self
+            .decrypter
+            .decrypt(input, &temporary, key, progress)
+            .await
+        {
+            tokio::fs::remove_file(&temporary).await.ok();
+            return Err(error);
+        }
+        if let Err(error) = tokio::fs::rename(&temporary, output).await {
+            tokio::fs::remove_file(&temporary).await.ok();
+            return Err(error.into());
+        }
         if !request.keep_encrypted {
             tokio::fs::remove_file(input).await.ok();
         }
@@ -643,6 +670,56 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(out, original);
+    }
+
+    #[tokio::test]
+    async fn failed_decryption_never_publishes_a_partial_book() {
+        struct FailingDecrypter;
+        #[async_trait]
+        impl Decrypter for FailingDecrypter {
+            async fn decrypt(
+                &self,
+                _input: &Path,
+                output: &Path,
+                _key: &DecryptionKey,
+                _progress: Option<crate::download::ProgressCallback>,
+            ) -> Result<()> {
+                tokio::fs::write(output, b"partial").await?;
+                Err(Error::InvalidMedia("test failure".into()))
+            }
+        }
+        let server = MockServer::start().await;
+        let mut client = signed_in(&server, Arc::new(MemoryStore::new())).await;
+        client.decrypter = Arc::new(FailingDecrypter);
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("book.aaxc");
+        let output = dir.path().join("book.m4b");
+        tokio::fs::write(&input, b"encrypted").await.unwrap();
+        tokio::fs::write(&output, b"existing").await.unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let mut request = DownloadRequest::new(Asin::new("TEST").unwrap(), dir.path());
+        request.progress = Some(Arc::new(move |event| captured.lock().unwrap().push(event)));
+        let key = DecryptionKey::Aaxc {
+            key: [0; 16],
+            iv: [0; 16],
+        };
+        assert!(
+            client
+                .decrypt(&input, &output, &key, &request)
+                .await
+                .is_err()
+        );
+        assert_eq!(tokio::fs::read(&output).await.unwrap(), b"existing");
+        assert!(matches!(
+            events.lock().unwrap().first(),
+            Some(DownloadEvent::Decrypting(Progress {
+                downloaded: 0,
+                total: None
+            }))
+        ));
+        assert!(input.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 
     #[tokio::test]
