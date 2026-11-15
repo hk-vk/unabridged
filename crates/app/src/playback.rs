@@ -415,9 +415,12 @@ impl Shell {
         let (Some(item), viewport) = (handle.bounds_for_item(current), handle.bounds()) else {
             return;
         };
-        let offset = handle.offset();
-        let target = offset.y - (item.origin.y - viewport.origin.y) + viewport.size.height * 0.3;
-        handle.set_offset(point(offset.x, target.min(px(0.))));
+        // Child bounds are laid out without the scroll applied, so the offset
+        // that puts the line 30% down the viewport doesn't depend on the
+        // current one.
+        let target = viewport.origin.y - item.origin.y + viewport.size.height * 0.3;
+        let lowest = -handle.max_offset().y;
+        handle.set_offset(point(handle.offset().x, target.clamp(lowest, px(0.))));
         read.followed = Some(current);
     }
 }
