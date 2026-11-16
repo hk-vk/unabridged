@@ -85,6 +85,9 @@ impl Shell {
     }
 
     pub(crate) fn close_mini_player(&mut self, cx: &mut Context<Self>) {
+        // It reopens as the pill.
+        self.mini_lyrics = false;
+        self.mini_lyrics_at = None;
         if let Some(handle) = self.mini_window.take() {
             cx.defer(move |cx| {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());

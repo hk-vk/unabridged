@@ -42,8 +42,50 @@ pub(crate) fn float_everywhere(window: &Window) {
     let _ = window;
 }
 
+/// The mini player's height when it is open on read along.
+pub(crate) const EXPANDED_HEIGHT: f32 = 470.;
+
+/// Resizes the mini player window, top edge fixed, on the sheet curve.
+pub(crate) fn set_height(window: &Window, height: f32, duration: std::time::Duration) {
+    #[cfg(target_os = "macos")]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        unsafe extern "C" {
+            fn ba_window_set_height(view: *mut std::ffi::c_void, height: f64, duration: f64);
+        }
+        if let Ok(handle) = HasWindowHandle::window_handle(window)
+            && let RawWindowHandle::AppKit(appkit) = handle.as_raw()
+        {
+            // SAFETY: `ns_view` is the live content view of this window, and
+            // GPUI calls us on the main thread.
+            unsafe {
+                ba_window_set_height(
+                    appkit.ns_view.as_ptr(),
+                    height as f64,
+                    duration.as_secs_f64(),
+                )
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, height, duration);
+}
+
+fn lerp(from: f32, to: f32, t: f32) -> f32 {
+    from + (to - from) * t
+}
+
+// The two shapes, in points. The pill: a 104 cover beside titles and the
+// transport. Read along: the cover shrinks into a 44 chip beside the titles,
+// the transcript fills the middle and the transport spans the bottom.
+const INSET: f32 = 14.;
+const COVER_PILL: f32 = 104.;
+const COVER_CHIP: f32 = 44.;
+/// Scrubber, gap and transport row, measured from the pill's column.
+const TRANSPORT_HEIGHT: f32 = 57.;
+
 impl Render for MiniPlayer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let shell = self.shell.read(cx);
         let Some(active) = &shell.player else {
             return div()
@@ -55,6 +97,13 @@ impl Render for MiniPlayer {
                 .child("Nothing playing")
                 .into_any_element();
         };
+        // 0 is the pill, 1 is read along; the layout eases between the two
+        // in step with the native window resize.
+        let (open, moving) = shell.mini_expansion();
+        if moving {
+            window.request_animation_frame();
+        }
+        let lyrics_on = shell.mini_lyrics;
         let title = active.title.clone();
         let cover = shell.covers.get(&active.asin).cloned();
         let palette = cx
@@ -88,6 +137,19 @@ impl Render for MiniPlayer {
             "Sleep timer".into()
         };
         let speed = active.player.rate();
+        // The transcript fades in once the window has mostly opened, rising a
+        // little as it comes; folding back, it is gone before the pill returns.
+        let lyrics_shown = ((open - 0.3) / 0.7).clamp(0., 1.);
+        let lyrics = (lyrics_shown > 0.).then(|| {
+            player::read_along_list(
+                shell,
+                player::ReadAlongPlace::MiniPlayer,
+                &palette,
+                self.shell.downgrade(),
+                window,
+                cx,
+            )
+        });
         let seek_shell = self.shell.downgrade();
         let scrubber = Scrubber::new(
             "mini-seek",
@@ -106,73 +168,135 @@ impl Render for MiniPlayer {
                 shell.update(cx, action)
             }
         };
+        let toggle_shell = self.shell.clone();
         // Cover and titles double as the drag handle: the window has no title bar.
         let drag = |el: gpui_kit::Stateful<gpui_kit::Div>| {
             el.on_mouse_down(gpui_kit::MouseButton::Left, |_, window, _| {
                 window.start_window_move()
             })
         };
+
+        // Read along keeps only what you reach for while reading: the
+        // scrubber, skip back, play and skip forward. Everything else fades
+        // out in the first half of the opening, keeping its space so the
+        // transport doesn't shift.
+        let extras = (1. - open * 2.).clamp(0., 1.);
+        let extras_on = extras > 0.;
+        let cover_size = lerp(COVER_PILL, COVER_CHIP, open);
+        let header_left = INSET + cover_size + lerp(16., 12., open);
+        // The titles centre on the chip once it has shrunk.
+        let header_top = lerp(INSET, INSET + 4., open);
+        let transport_left = lerp(INSET + COVER_PILL + 16., 18., open);
+        let transport_right = lerp(INSET, 18., open);
+        // The transcript runs right up to the header and transport; its lines
+        // fade out at both edges instead of being cut off.
+        let lyrics_top = INSET + COVER_CHIP + 2.;
+        let lyrics_bottom = INSET + TRANSPORT_HEIGHT + 4.;
+        // The pill's field; it deepens towards the bottom as the window opens.
+        let background = linear_gradient(
+            180.,
+            linear_color_stop(palette.field.opacity(0.86), 0.),
+            linear_color_stop(
+                playback::mix(palette.field, palette.field_deep, open)
+                    .opacity(lerp(0.86, 0.92, open)),
+                1.,
+            ),
+        );
+
         div()
             .size_full()
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .p(px(14.))
+            .relative()
+            .overflow_hidden()
             .font_family(ui::typography::family::UI)
-            .bg(palette.field.opacity(0.86))
+            .bg(background)
             .text_color(palette.on_field)
+            .when_some(lyrics, |root, lyrics| {
+                root.child(
+                    div()
+                        .absolute()
+                        .left(px(10.))
+                        .right(px(10.))
+                        .top(px(lyrics_top + (1. - lyrics_shown) * 10.))
+                        .bottom(px(lyrics_bottom))
+                        .opacity(lyrics_shown)
+                        .child(lyrics),
+                )
+            })
             .child(
-                drag(div().id("mini-cover").flex_none()).child(
-                    Cover::new(
-                        cover
-                            .map(gpui_kit::ImageSource::from)
-                            .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
-                        CoverSize::Square(104.),
-                        ui::metrics::radius::COVER_LARGE,
-                    )
-                    .elevation(Elevation::CoverOnField),
-                ),
+                drag(div().id("mini-cover"))
+                    .absolute()
+                    .left(px(INSET))
+                    .top(px(INSET))
+                    .child(
+                        Cover::new(
+                            cover
+                                .map(gpui_kit::ImageSource::from)
+                                .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
+                            CoverSize::Square(cover_size),
+                            ui::metrics::radius::COVER_LARGE,
+                        )
+                        .elevation(Elevation::CoverOnField),
+                    ),
             )
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(104.))
+                    .absolute()
+                    .left(px(header_left))
+                    .right(px(INSET))
+                    .top(px(header_top))
                     .flex()
-                    .flex_col()
-                    .justify_between()
+                    .items_start()
+                    .gap(px(8.))
                     .child(
-                        div()
+                        drag(div().id("mini-titles"))
+                            .flex_1()
+                            .min_w_0()
                             .flex()
-                            .items_start()
-                            .gap(px(8.))
+                            .flex_col()
+                            .gap(px(2.))
                             .child(
-                                drag(div().id("mini-titles"))
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .type_style(ui::text::BOOK_MINI)
-                                            .child(title),
-                                    )
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .type_style(ui::text::CAPTION)
-                                            .text_color(palette.on_field_muted)
-                                            .child(subtitle),
-                                    ),
+                                div()
+                                    .truncate()
+                                    .type_style(ui::text::BOOK_MINI)
+                                    .child(title),
                             )
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_none()
-                                    .items_center()
-                                    .child(
+                                    .truncate()
+                                    .type_style(ui::text::CAPTION)
+                                    .text_color(palette.on_field_muted)
+                                    .child(subtitle),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .child(
+                                IconButton::new("mini-read-along", Icon::Subtitle, 13.)
+                                    .hit_area(22.)
+                                    .color(if lyrics_on {
+                                        palette.on_field
+                                    } else {
+                                        palette.on_field_muted
+                                    })
+                                    .hover_fill(palette.on_field_track)
+                                    .tooltip(if lyrics_on {
+                                        "Hide read along"
+                                    } else {
+                                        "Read along"
+                                    })
+                                    .on_click(move |_, window, cx| {
+                                        let (height, duration) = toggle_shell
+                                            .update(cx, |shell, cx| shell.toggle_mini_lyrics(cx));
+                                        set_height(window, height, duration);
+                                        window.refresh();
+                                    }),
+                            )
+                            .when(extras_on, |icons| {
+                                icons.child(
+                                    div().opacity(extras).child(
                                         IconButton::new("mini-expand", Icon::Expand, 13.)
                                             .hit_area(22.)
                                             .color(palette.on_field_muted)
@@ -181,43 +305,55 @@ impl Render for MiniPlayer {
                                             .on_click(on_shell(|shell, cx| {
                                                 shell.show_main_player(cx)
                                             })),
-                                    )
-                                    .child(
-                                        IconButton::new("mini-close", Icon::Cancel, 13.)
-                                            .hit_area(22.)
-                                            .color(palette.on_field_muted)
-                                            .hover_fill(palette.on_field_track)
-                                            .tooltip("Close mini player")
-                                            .on_click(on_shell(|shell, cx| {
-                                                shell.close_mini_player(cx)
-                                            })),
                                     ),
+                                )
+                            })
+                            .child(
+                                IconButton::new("mini-close", Icon::Cancel, 13.)
+                                    .hit_area(22.)
+                                    .color(palette.on_field_muted)
+                                    .hover_fill(palette.on_field_track)
+                                    .tooltip("Close mini player")
+                                    .on_click(on_shell(|shell, cx| shell.close_mini_player(cx))),
                             ),
-                    )
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(transport_left))
+                    .right(px(transport_right))
+                    .bottom(px(INSET))
+                    .flex()
+                    .flex_col()
+                    .gap(px(11.))
                     .child(scrubber)
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .child(
-                                div().w(px(70.)).flex().child(
-                                    div()
-                                        .id("mini-time")
-                                        .cursor_pointer()
-                                        .hover(|style| style.opacity(0.72))
-                                        .type_style(ui::text::CAPTION.tabular())
-                                        .text_color(palette.on_field_muted)
-                                        .tooltip(move |window, cx| {
-                                            gpui_kit::component::tooltip::Tooltip::new(left_tip)
-                                                .build(window, cx)
-                                        })
-                                        .on_click(on_shell(|shell, cx| {
-                                            shell.mini_book_time = !shell.mini_book_time;
-                                            cx.notify();
-                                        }))
-                                        .child(left),
-                                ),
-                            )
+                            .child(div().w(px(70.)).flex().opacity(extras).when(
+                                extras_on,
+                                |slot| {
+                                    slot.child(
+                                        div()
+                                            .id("mini-time")
+                                            .cursor_pointer()
+                                            .hover(|style| style.opacity(0.72))
+                                            .type_style(ui::text::CAPTION.tabular())
+                                            .text_color(palette.on_field_muted)
+                                            .tooltip(move |window, cx| {
+                                                gpui_kit::component::tooltip::Tooltip::new(left_tip)
+                                                    .build(window, cx)
+                                            })
+                                            .on_click(on_shell(|shell, cx| {
+                                                shell.mini_book_time = !shell.mini_book_time;
+                                                cx.notify();
+                                            }))
+                                            .child(left),
+                                    )
+                                },
+                            ))
                             .child(
                                 div()
                                     .flex_1()
@@ -225,15 +361,24 @@ impl Render for MiniPlayer {
                                     .items_center()
                                     .justify_center()
                                     .gap(px(8.))
-                                    .child(
-                                        IconButton::new("mini-previous", Icon::Previous, 15.)
-                                            .hit_area(22.)
-                                            .color(palette.on_field_muted)
-                                            .tooltip("Previous chapter")
-                                            .on_click(on_shell(|shell, cx| {
-                                                shell.step_chapter(false, cx)
-                                            })),
-                                    )
+                                    .child(div().size(px(22.)).opacity(extras).when(
+                                        extras_on,
+                                        |slot| {
+                                            slot.child(
+                                                IconButton::new(
+                                                    "mini-previous",
+                                                    Icon::Previous,
+                                                    15.,
+                                                )
+                                                .hit_area(22.)
+                                                .color(palette.on_field_muted)
+                                                .tooltip("Previous chapter")
+                                                .on_click(on_shell(|shell, cx| {
+                                                    shell.step_chapter(false, cx)
+                                                })),
+                                            )
+                                        },
+                                    ))
                                     .child(
                                         IconButton::new("mini-back", Icon::Back30, 21.)
                                             .hit_area(26.)
@@ -260,15 +405,20 @@ impl Render for MiniPlayer {
                                             .tooltip("Forward 30 seconds")
                                             .on_click(on_shell(|shell, cx| shell.skip(30., cx))),
                                     )
-                                    .child(
-                                        IconButton::new("mini-next", Icon::Next, 15.)
-                                            .hit_area(22.)
-                                            .color(palette.on_field_muted)
-                                            .tooltip("Next chapter")
-                                            .on_click(on_shell(|shell, cx| {
-                                                shell.step_chapter(true, cx)
-                                            })),
-                                    ),
+                                    .child(div().size(px(22.)).opacity(extras).when(
+                                        extras_on,
+                                        |slot| {
+                                            slot.child(
+                                                IconButton::new("mini-next", Icon::Next, 15.)
+                                                    .hit_area(22.)
+                                                    .color(palette.on_field_muted)
+                                                    .tooltip("Next chapter")
+                                                    .on_click(on_shell(|shell, cx| {
+                                                        shell.step_chapter(true, cx)
+                                                    })),
+                                            )
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -277,27 +427,34 @@ impl Render for MiniPlayer {
                                     .items_center()
                                     .justify_end()
                                     .gap(px(4.))
-                                    .child(
-                                        IconButton::new("mini-sleep", Icon::Moon, 14.)
-                                            .hit_area(22.)
-                                            .color(if sleeping {
-                                                palette.on_field
-                                            } else {
-                                                palette.on_field_muted
-                                            })
-                                            .hover_fill(palette.on_field_track)
-                                            .tooltip(sleep_tip)
-                                            .on_click(on_shell(|shell, cx| shell.cycle_sleep(cx))),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("mini-speed")
-                                            .cursor_pointer()
-                                            .hover(|style| style.opacity(0.72))
-                                            .type_style(ui::text::CAPTION_MEDIUM)
-                                            .child(model::format::speed(speed))
-                                            .on_click(on_shell(|shell, cx| shell.cycle_speed(cx))),
-                                    ),
+                                    .opacity(extras)
+                                    .when(extras_on, |slot| {
+                                        slot.child(
+                                            IconButton::new("mini-sleep", Icon::Moon, 14.)
+                                                .hit_area(22.)
+                                                .color(if sleeping {
+                                                    palette.on_field
+                                                } else {
+                                                    palette.on_field_muted
+                                                })
+                                                .hover_fill(palette.on_field_track)
+                                                .tooltip(sleep_tip)
+                                                .on_click(on_shell(|shell, cx| {
+                                                    shell.cycle_sleep(cx)
+                                                })),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("mini-speed")
+                                                .cursor_pointer()
+                                                .hover(|style| style.opacity(0.72))
+                                                .type_style(ui::text::CAPTION_MEDIUM)
+                                                .child(model::format::speed(speed))
+                                                .on_click(on_shell(|shell, cx| {
+                                                    shell.cycle_speed(cx)
+                                                })),
+                                        )
+                                    }),
                             ),
                     ),
             )

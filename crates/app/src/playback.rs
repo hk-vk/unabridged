@@ -401,13 +401,10 @@ impl Shell {
             start_ms,
             locale,
             job: transcript::start(span(start, end), next),
-            followed: None,
             downloading: false,
-            previous: None,
-            changed_at: std::time::Instant::now(),
-            glide: Default::default(),
         });
-        self.read_along_scroll.set_offset(point(px(0.), px(0.)));
+        self.read_along_follow.reset();
+        self.mini_follow.reset();
     }
 
     /// Downloads the speech model, then transcribes the chapter.
@@ -425,7 +422,7 @@ impl Shell {
             return;
         };
         let position = active.player.position();
-        let Some(read) = &mut self.read_along else {
+        let Some(read) = &self.read_along else {
             return;
         };
         let Some(current) = read
@@ -436,10 +433,79 @@ impl Shell {
         else {
             return;
         };
-        if read.followed == Some(current) {
+        if self.read_along_open && self.page == Page::NowPlaying {
+            self.read_along_follow.follow(current, reduce_motion);
+        }
+        if self.mini_lyrics && self.mini_window.is_some() {
+            self.mini_follow.follow(current, reduce_motion);
+        }
+    }
+
+    /// How far the mini player is between its pill (0) and read-along (1)
+    /// shapes, and whether it is still moving.
+    pub(crate) fn mini_expansion(&self) -> (f32, bool) {
+        let target = if self.mini_lyrics { 1. } else { 0. };
+        let Some(at) = self.mini_lyrics_at else {
+            return (target, false);
+        };
+        let duration = if self.mini_lyrics {
+            MINI_EXPAND
+        } else {
+            MINI_COLLAPSE
+        };
+        let t = at.elapsed().as_secs_f32() / duration.as_secs_f32();
+        if t >= 1. {
+            return (target, false);
+        }
+        let from = self.mini_lyrics_from;
+        (from + (target - from) * ease_sheet(t), true)
+    }
+
+    /// Expands the mini player into read along, or folds it back into the
+    /// pill. Returns the window height to animate to, and over how long.
+    pub(crate) fn toggle_mini_lyrics(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> (f32, std::time::Duration) {
+        let (now, _) = self.mini_expansion();
+        self.mini_lyrics = !self.mini_lyrics;
+        self.mini_lyrics_from = now;
+        self.mini_lyrics_at = (!cx.reduce_motion()).then(std::time::Instant::now);
+        if self.mini_lyrics {
+            self.ensure_read_along(cx);
+            self.mini_follow.reset();
+        }
+        cx.notify();
+        let (height, duration) = if self.mini_lyrics {
+            (mini_player::EXPANDED_HEIGHT, MINI_EXPAND)
+        } else {
+            (mini_player::SIZE.1, MINI_COLLAPSE)
+        };
+        let duration = if cx.reduce_motion() {
+            std::time::Duration::ZERO
+        } else {
+            duration
+        };
+        (height, duration)
+    }
+}
+
+impl Follow {
+    /// Forgets the followed line and scrolls back to the top, for a new
+    /// chapter or a view that just appeared.
+    pub(crate) fn reset(&mut self) {
+        self.followed = None;
+        self.previous = None;
+        self.glide.set(None);
+        self.scroll.set_offset(point(px(0.), px(0.)));
+    }
+
+    /// Scrolls so the spoken line sits 30% down the view.
+    fn follow(&mut self, current: usize, reduce_motion: bool) {
+        if self.followed == Some(current) {
             return;
         }
-        let handle = &self.read_along_scroll;
+        let handle = &self.scroll;
         let (Some(item), viewport) = (handle.bounds_for_item(current), handle.bounds()) else {
             return;
         };
@@ -453,16 +519,47 @@ impl Shell {
         } else {
             // Start from wherever the list is now, so quick line changes
             // redirect the glide instead of restarting it.
-            read.glide.set(Some(Glide {
+            self.glide.set(Some(Glide {
                 from: handle.offset().y,
                 to: target,
                 started: std::time::Instant::now(),
             }));
         }
-        read.previous = read.followed;
-        read.followed = Some(current);
-        read.changed_at = std::time::Instant::now();
+        self.previous = self.followed;
+        self.followed = Some(current);
+        self.changed_at = std::time::Instant::now();
     }
+}
+
+/// How long the mini player takes to open into read along.
+pub(crate) const MINI_EXPAND: std::time::Duration = std::time::Duration::from_millis(460);
+/// Folding back is quicker: the user has already decided.
+pub(crate) const MINI_COLLAPSE: std::time::Duration = std::time::Duration::from_millis(320);
+
+/// The sheet curve, cubic-bezier(0.32, 0.72, 0, 1): a steep start that settles
+/// slowly. The native window resize uses the same control points.
+pub(crate) fn ease_sheet(t: f32) -> f32 {
+    cubic_bezier(0.32, 0.72, 0., 1., t)
+}
+
+/// CSS-style cubic Bézier easing: solves x(s) = t, returns y(s).
+fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
+    let t = t.clamp(0., 1.);
+    let curve = |a: f32, b: f32, s: f32| {
+        let inv = 1. - s;
+        3. * inv * inv * s * a + 3. * inv * s * s * b + s * s * s
+    };
+    // Bisection: x(s) is monotonic for control x in [0, 1].
+    let (mut lo, mut hi) = (0f32, 1f32);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.;
+        if curve(x1, x2, mid) < t {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    curve(y1, y2, (lo + hi) / 2.)
 }
 
 /// How long the transcript takes to glide to the next line.
@@ -492,9 +589,10 @@ pub(crate) fn mix(from: gpui_kit::Hsla, to: gpui_kit::Hsla, t: f32) -> gpui_kit:
     }
 }
 
-impl ReadAlong {
+impl Follow {
     /// Advances the scroll glide; true while it still needs frames.
-    pub(crate) fn step_glide(&self, handle: &gpui_kit::ScrollHandle) -> bool {
+    pub(crate) fn step_glide(&self) -> bool {
+        let handle = &self.scroll;
         let Some(glide) = self.glide.get() else {
             return false;
         };

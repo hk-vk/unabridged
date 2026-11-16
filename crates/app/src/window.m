@@ -1,5 +1,35 @@
 // Native window tweaks GPUI does not expose.
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
+
+// Resizes the window hosting `view` to `height`, keeping its top edge where it
+// is (or its bottom on the screen when there is no room below), on the sheet
+// curve cubic-bezier(0.32, 0.72, 0, 1). A zero duration resizes at once.
+void ba_window_set_height(void *view, double height, double duration) {
+    NSView *ns_view = (__bridge NSView *)view;
+    NSWindow *window = ns_view.window;
+    if (window == nil) {
+        return;
+    }
+    NSRect frame = window.frame;
+    NSRect next = frame;
+    next.size.height = height;
+    next.origin.y = NSMaxY(frame) - height;
+    NSScreen *screen = window.screen ?: NSScreen.mainScreen;
+    if (screen != nil && next.origin.y < NSMinY(screen.visibleFrame)) {
+        next.origin.y = NSMinY(screen.visibleFrame);
+    }
+    if (duration <= 0) {
+        [window setFrame:next display:YES];
+        return;
+    }
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        context.duration = duration;
+        context.timingFunction =
+            [CAMediaTimingFunction functionWithControlPoints:0.32:0.72:0.0:1.0];
+        [[window animator] setFrame:next display:YES];
+    }];
+}
 
 // Turns the window hosting `view` into a chromeless panel that floats above
 // every app, on every Space and over full-screen apps, and stays visible

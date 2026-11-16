@@ -99,7 +99,11 @@ impl Shell {
             sleep_choice: "Off",
             prefs: backend::load_playback(),
             read_along: None,
-            read_along_scroll: Default::default(),
+            read_along_follow: Default::default(),
+            mini_follow: Default::default(),
+            mini_lyrics: false,
+            mini_lyrics_from: 0.,
+            mini_lyrics_at: None,
             chapter_picker_scroll: Default::default(),
             covers: Default::default(),
             covers_pending: Default::default(),
@@ -144,7 +148,9 @@ impl Shell {
                             this.sync_position(cx);
                             cx.notify();
                         }
-                        if this.read_along_open && this.page == Page::NowPlaying {
+                        if (this.read_along_open && this.page == Page::NowPlaying)
+                            || (this.mini_lyrics && this.mini_window.is_some())
+                        {
                             this.ensure_read_along(cx);
                             this.follow_read_along(cx.reduce_motion());
                             cx.notify();

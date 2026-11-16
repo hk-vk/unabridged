@@ -148,16 +148,34 @@ struct ReadAlong {
     start_ms: u64,
     locale: &'static str,
     job: transcript::SharedJob,
-    /// The line the view last scrolled to, so it only moves on a new line.
-    followed: Option<usize>,
     /// A model download is running; transcribe once it finishes.
     downloading: bool,
+}
+
+/// One on-screen copy of the transcript (Now Playing or the mini player):
+/// its scroll and the spoken line it follows.
+struct Follow {
+    scroll: gpui_kit::ScrollHandle,
+    /// The line the view last scrolled to, so it only moves on a new line.
+    followed: Option<usize>,
     /// The line that was spoken before `followed`, and when that changed,
     /// for the highlight crossfade.
     previous: Option<usize>,
     changed_at: std::time::Instant,
     /// The scroll glide in progress, if any. A `Cell` so render can finish it.
     glide: std::cell::Cell<Option<Glide>>,
+}
+
+impl Default for Follow {
+    fn default() -> Self {
+        Self {
+            scroll: Default::default(),
+            followed: None,
+            previous: None,
+            changed_at: std::time::Instant::now(),
+            glide: Default::default(),
+        }
+    }
 }
 
 /// An eased scroll from one offset to another.
@@ -215,7 +233,16 @@ struct Shell {
     /// Speed and volume, saved between launches.
     prefs: backend::PlaybackPrefs,
     read_along: Option<ReadAlong>,
-    read_along_scroll: gpui_kit::ScrollHandle,
+    /// The transcript on Now Playing.
+    read_along_follow: Follow,
+    /// The transcript in the expanded mini player.
+    mini_follow: Follow,
+    /// The mini player is expanded to show read along.
+    mini_lyrics: bool,
+    /// The mini player's expansion when it last toggled, and when, so the
+    /// layout can ease between the two shapes.
+    mini_lyrics_from: f32,
+    mini_lyrics_at: Option<std::time::Instant>,
     chapter_picker_scroll: gpui_kit::ScrollHandle,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,
     covers_pending: std::collections::HashSet<audible::Asin>,

@@ -149,6 +149,8 @@ pub mod text {
     pub const BOOK_SENTENCE: TypeStyle = TypeStyle::book(17.0, 1.45);
     /// Popover title (Literata 16 / 1.2).
     pub const BOOK_SMALL: TypeStyle = TypeStyle::book(16.0, 1.2);
+    /// Read along in the mini player (Literata 18 / 1.38).
+    pub const BOOK_READ_ALONG: TypeStyle = TypeStyle::book(18.0, 1.38);
     /// Mini player title (Literata 15 / 1.2).
     pub const BOOK_MINI: TypeStyle = TypeStyle::book(15.0, 1.2);
 

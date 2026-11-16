@@ -8,7 +8,7 @@ mod frame;
 mod home;
 pub(crate) mod menus;
 pub(crate) mod mini_player;
-mod player;
+pub(crate) mod player;
 mod settings;
 
 use crate::*;

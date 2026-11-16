@@ -227,7 +227,14 @@ impl Shell {
                                     div()
                                         .mt(px(28.))
                                         .h(px(if compact { 220. } else { 340. }))
-                                        .child(self.read_along_view(&palette, window, cx)),
+                                        .child(read_along_list(
+                                            self,
+                                            ReadAlongPlace::NowPlaying,
+                                            &palette,
+                                            cx.entity().downgrade(),
+                                            window,
+                                            cx,
+                                        )),
                                 )
                             })
                             .when(!self.read_along_open, |column| {
@@ -306,7 +313,16 @@ impl Shell {
                             .child(
                                 Chip::new("show-read-along")
                                     .label("Read along")
-                                    .icon(Icon::Subtitle, palette.on_field)
+                                    // The icon takes the label's colour, so it
+                                    // stays visible on the filled "on" state.
+                                    .icon(
+                                        Icon::Subtitle,
+                                        if self.read_along_open {
+                                            palette.field_deep
+                                        } else {
+                                            palette.on_field
+                                        },
+                                    )
                                     .height(ui::metrics::size::FIELD_PILL)
                                     // Filled while on, like a pressed toggle.
                                     .style(if self.read_along_open {
@@ -407,181 +423,290 @@ impl Shell {
     }
 }
 
-impl Shell {
-    /// The read-along transcript: the spoken line bright, the rest soft,
-    /// following playback. Click a line to jump there.
-    fn read_along_view(
-        &self,
-        palette: &ui::theme::BookPalette,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
-        let message = |text: &'static str| {
-            div()
-                .type_style(ui::text::BODY)
-                .text_color(palette.on_field_muted)
-                .child(text)
-                .into_any_element()
-        };
-        let Some(active) = &self.player else {
-            return div().into_any_element();
-        };
-        if backend::downloaded_path(&active.account_key, &active.asin).is_none() {
-            return message("Read along works for books downloaded to this Mac.");
-        }
-        let Some(read) = &self.read_along else {
-            return transcript_placeholder("Getting ready", palette, cx);
-        };
-        let Ok(job) = read.job.lock() else {
-            return div().into_any_element();
-        };
-        match &job.phase {
-            transcript::Phase::Checking if job.lines.is_empty() => {
-                return transcript_placeholder("Getting ready", palette, cx);
-            }
-            transcript::Phase::NeedsModel => {
-                return div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .child(
-                        div()
-                            .type_style(ui::text::BODY)
-                            .text_color(palette.on_field_muted)
-                            .child(
-                                "Read along transcribes each chapter on your Mac with Apple’s speech model. Nothing leaves your Mac. The model is a one-time download.",
-                            ),
-                    )
-                    .child(
-                        div().flex().child(
-                            Chip::new("download-speech-model")
-                                .label("Download speech model")
-                                .icon(Icon::Download, palette.on_field)
-                                .height(ui::metrics::size::POPUP)
-                                .style(ChipStyle::Outline {
-                                    outline: palette.on_field_track,
-                                    content: palette.on_field,
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.download_speech_model(cx)
-                                })),
-                        ),
-                    )
-                    .into_any_element();
-            }
-            transcript::Phase::Downloading(progress) => {
-                return div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    .w(px(280.))
-                    .child(
-                        div()
-                            .type_style(ui::text::CAPTION.tabular())
-                            .text_color(palette.on_field_muted)
-                            .child(format!("Downloading speech model… {:.0}%", progress * 100.)),
-                    )
-                    .child(
-                        SegmentedProgress::new(0., *progress, 0.)
-                            .colors(palette.on_field, palette.on_field_track),
-                    )
-                    .into_any_element();
-            }
-            transcript::Phase::Unsupported(text) | transcript::Phase::Failed(text)
-                if job.lines.is_empty() =>
-            {
-                return div()
-                    .type_style(ui::text::BODY)
-                    .text_color(palette.on_field_muted)
-                    .child(text.clone())
-                    .into_any_element();
-            }
-            transcript::Phase::Transcribing if job.lines.is_empty() => {
-                return transcript_placeholder("Transcribing this chapter", palette, cx);
-            }
-            _ => {}
-        }
-        let position = active.player.position();
-        let duration = active.player.duration().max(1.);
-        let current = transcript::current_line(&job.lines, position);
-        let still_working = job.phase == transcript::Phase::Transcribing;
-        // Glide the list and crossfade the highlight between lines.
-        let gliding = read.step_glide(&self.read_along_scroll);
-        let fade = read.changed_at.elapsed().as_secs_f32() / playback::HIGHLIGHT_FADE.as_secs_f32();
-        if gliding || fade < 1. {
-            window.request_animation_frame();
-        }
-        let fade = fade.min(1.);
-        let spoken = palette.on_field;
-        let upcoming = palette.on_field_muted;
-        let heard = palette.on_field_muted.opacity(0.55);
-        let mut list = div()
-            .id("read-along")
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.read_along_scroll)
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .pb(px(120.));
-        for (index, line) in job.lines.iter().enumerate() {
-            let target = (line.start / duration).clamp(0., 1.) as f32;
-            let resting = |line: Option<usize>| match line {
-                Some(at) if at == index => spoken,
-                Some(at) if index < at => heard,
-                _ => upcoming,
-            };
-            let color = if read.followed == current {
-                playback::mix(resting(read.previous), resting(current), fade)
-            } else {
-                resting(current)
-            };
-            list = list.child(
-                div()
-                    .id(("read-along-line", index))
-                    .cursor_pointer()
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded(px(8.))
-                    .hover(|style| style.bg(palette.on_field_track))
-                    .type_style(ui::text::BOOK_ROW)
-                    .text_color(color)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.seek_fraction(target, cx);
-                        if let Some(read) = &mut this.read_along {
-                            read.followed = None;
-                        }
-                    }))
-                    .child(line.text.clone()),
-            );
-        }
-        if still_working {
-            list = list.child(
-                div()
-                    .px(px(8.))
-                    .type_style(ui::text::CAPTION)
-                    .text_color(palette.on_field_muted)
-                    .child(ShimmerText::new("Transcribing…")),
-            );
-        }
-        list.into_any_element()
+/// Where a transcript is shown; each place keeps its own scroll and style.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadAlongPlace {
+    NowPlaying,
+    MiniPlayer,
+}
+
+/// The read-along transcript: the spoken line bright, the rest soft,
+/// following playback. Click a line to jump there.
+///
+/// In the mini player the spoken line also fills in word by word as it is
+/// read, lines already heard fall back, and lines further ahead fade out.
+pub(crate) fn read_along_list(
+    shell: &Shell,
+    place: ReadAlongPlace,
+    palette: &ui::theme::BookPalette,
+    entity: gpui_kit::WeakEntity<Shell>,
+    window: &Window,
+    cx: &gpui_kit::App,
+) -> gpui_kit::AnyElement {
+    let mini = place == ReadAlongPlace::MiniPlayer;
+    let follow = if mini {
+        &shell.mini_follow
+    } else {
+        &shell.read_along_follow
+    };
+    let reduce_motion = cx.reduce_motion();
+    let message = |text: &str| {
+        div()
+            .type_style(ui::text::BODY)
+            .text_color(palette.on_field_muted)
+            .child(text.to_string())
+            .into_any_element()
+    };
+    let Some(active) = &shell.player else {
+        return div().into_any_element();
+    };
+    if backend::downloaded_path(&active.account_key, &active.asin).is_none() {
+        return message("Read along works for books downloaded to this Mac.");
     }
+    let Some(read) = &shell.read_along else {
+        return transcript_placeholder("Getting ready", palette, mini, reduce_motion);
+    };
+    let Ok(job) = read.job.lock() else {
+        return div().into_any_element();
+    };
+    match &job.phase {
+        transcript::Phase::Checking if job.lines.is_empty() => {
+            return transcript_placeholder("Getting ready", palette, mini, reduce_motion);
+        }
+        transcript::Phase::NeedsModel => {
+            let entity = entity.clone();
+            return div()
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .child(
+                    div()
+                        .type_style(ui::text::BODY)
+                        .text_color(palette.on_field_muted)
+                        .child(
+                            "Read along transcribes each chapter on your Mac with Apple’s speech model. Nothing leaves your Mac. The model is a one-time download.",
+                        ),
+                )
+                .child(
+                    div().flex().child(
+                        Chip::new("download-speech-model")
+                            .label("Download speech model")
+                            .icon(Icon::Download, palette.on_field)
+                            .height(ui::metrics::size::POPUP)
+                            .style(ChipStyle::Outline {
+                                outline: palette.on_field_track,
+                                content: palette.on_field,
+                            })
+                            .on_click(move |_, _, cx| {
+                                let _ = entity.update(cx, |this, cx| this.download_speech_model(cx));
+                            }),
+                    ),
+                )
+                .into_any_element();
+        }
+        transcript::Phase::Downloading(progress) => {
+            return div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .w(px(if mini { 240. } else { 280. }))
+                .child(
+                    div()
+                        .type_style(ui::text::CAPTION.tabular())
+                        .text_color(palette.on_field_muted)
+                        .child(format!("Downloading speech model… {:.0}%", progress * 100.)),
+                )
+                .child(
+                    SegmentedProgress::new(0., *progress, 0.)
+                        .colors(palette.on_field, palette.on_field_track),
+                )
+                .into_any_element();
+        }
+        transcript::Phase::Unsupported(text) | transcript::Phase::Failed(text)
+            if job.lines.is_empty() =>
+        {
+            return message(text);
+        }
+        transcript::Phase::Transcribing if job.lines.is_empty() => {
+            return transcript_placeholder(
+                "Transcribing this chapter",
+                palette,
+                mini,
+                reduce_motion,
+            );
+        }
+        _ => {}
+    }
+    let position = active.player.position();
+    let duration = active.player.duration().max(1.);
+    let current = transcript::current_line(&job.lines, position);
+    let still_working = job.phase == transcript::Phase::Transcribing;
+    // Glide the list and crossfade the highlight between lines.
+    let gliding = follow.step_glide();
+    let fade = follow.changed_at.elapsed().as_secs_f32() / playback::HIGHLIGHT_FADE.as_secs_f32();
+    if gliding || fade < 1. {
+        window.request_animation_frame();
+    }
+    let fade = fade.min(1.);
+    let spoken = palette.on_field;
+    let upcoming = palette.on_field_muted;
+    let heard = palette.on_field_muted.opacity(0.55);
+    let id = if mini {
+        "mini-read-along"
+    } else {
+        "read-along"
+    };
+    // On glass there is nothing solid to fade under, so in the mini player
+    // each line fades itself near the top and bottom edges, by where it sat
+    // last frame (laid out without the scroll, so add the offset back).
+    let viewport = follow.scroll.bounds();
+    let offset = follow.scroll.offset().y;
+    let edge_fade = |index: usize| -> f32 {
+        if !mini || viewport.size.height <= px(0.) {
+            return 1.;
+        }
+        let Some(item) = follow.scroll.bounds_for_item(index) else {
+            return 1.;
+        };
+        let height = viewport.size.height;
+        let top = (item.origin.y + offset - viewport.origin.y) / height;
+        let bottom = (item.origin.y + item.size.height + offset - viewport.origin.y) / height;
+        let from_top = (bottom / 0.16).clamp(0., 1.);
+        let from_bottom = ((1. - top) / 0.22).clamp(0., 1.);
+        let smooth = |t: f32| t * t * (3. - 2. * t);
+        smooth(from_top.min(from_bottom))
+    };
+    let mut list = div()
+        .id(id)
+        .size_full()
+        .overflow_y_scroll()
+        .track_scroll(&follow.scroll)
+        .flex()
+        .flex_col()
+        .gap(px(if mini { 10. } else { 14. }))
+        .when(mini, |list| list.pt(px(40.)).pb(px(240.)))
+        .when(!mini, |list| list.pb(px(120.)));
+    for (index, line) in job.lines.iter().enumerate() {
+        let target = (line.start / duration).clamp(0., 1.) as f32;
+        let resting = |at_line: Option<usize>| match at_line {
+            Some(at) if at == index => spoken,
+            Some(at) if index < at => heard,
+            // In the mini player, lines further ahead recede.
+            Some(at) if mini && index > at + 2 => upcoming.opacity(0.6),
+            _ => upcoming,
+        };
+        let color = if follow.followed == current {
+            playback::mix(resting(follow.previous), resting(current), fade)
+        } else {
+            resting(current)
+        };
+        let row = div()
+            .id((id, index))
+            .opacity(edge_fade(index))
+            .cursor_pointer()
+            .px(px(8.))
+            .py(px(if mini { 3. } else { 4. }))
+            .rounded(px(8.))
+            .hover(|style| style.bg(palette.on_field_track))
+            .type_style(if mini {
+                ui::text::BOOK_READ_ALONG
+            } else {
+                ui::text::BOOK_ROW
+            })
+            .text_color(color)
+            .on_click({
+                let entity = entity.clone();
+                move |_, _, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.seek_fraction(target, cx);
+                        this.read_along_follow.followed = None;
+                        this.mini_follow.followed = None;
+                    });
+                }
+            });
+        // The spoken line fills in word by word, timed to the sentence.
+        let filling = mini && !reduce_motion && current == Some(index);
+        list = list.child(if filling {
+            let span = (line.end - line.start).max(0.1);
+            let progress = ((position - line.start) / span).clamp(0., 1.) as f32;
+            let unread = playback::mix(upcoming, spoken, 0.35);
+            row.child(word_fill(&line.text, progress, unread, color))
+        } else {
+            row.child(line.text.clone())
+        });
+    }
+    if still_working {
+        list = list.child(
+            div()
+                .px(px(8.))
+                .type_style(ui::text::CAPTION)
+                .text_color(palette.on_field_muted)
+                .child(ShimmerText::new("Transcribing…")),
+        );
+    }
+    list.into_any_element()
+}
+
+/// A line whose words light up from `unread` to `read` as `progress` sweeps
+/// across it, each word easing in over its own share of the line.
+fn word_fill(
+    text: &str,
+    progress: f32,
+    unread: gpui_kit::Hsla,
+    read: gpui_kit::Hsla,
+) -> gpui_kit::StyledText {
+    let total = text.chars().count().max(1) as f32;
+    let reached = progress * total;
+    let mut highlights = Vec::new();
+    let mut chars_before = 0usize;
+    let mut word_start: Option<(usize, usize)> = None;
+    let mut push = |start: usize, end: usize, first_char: usize, chars: usize| {
+        let share = ((reached - first_char as f32) / chars.max(1) as f32).clamp(0., 1.);
+        highlights.push((
+            start..end,
+            gpui_kit::HighlightStyle {
+                color: Some(playback::mix(unread, read, share)),
+                ..Default::default()
+            },
+        ));
+    };
+    for (byte, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            if let Some((start, first_char)) = word_start.take() {
+                push(start, byte, first_char, chars_before - first_char);
+            }
+        } else if word_start.is_none() {
+            word_start = Some((byte, chars_before));
+        }
+        chars_before += 1;
+    }
+    if let Some((start, first_char)) = word_start {
+        push(start, text.len(), first_char, chars_before - first_char);
+    }
+    gpui_kit::StyledText::new(text.to_string()).with_highlights(highlights)
 }
 
 /// Shimmering label and line-shaped bars while a transcript is on its way.
 fn transcript_placeholder(
     label: &'static str,
     palette: &ui::theme::BookPalette,
-    cx: &Context<Shell>,
+    mini: bool,
+    reduced_motion: bool,
 ) -> gpui_kit::AnyElement {
-    let reduced_motion = cx.reduce_motion();
-    let mut column = div().flex().flex_col().gap(px(14.)).child(
-        div()
-            .type_style(ui::text::CAPTION)
-            .text_color(palette.on_field_muted)
-            .child(ShimmerText::new(label)),
-    );
+    let scale = if mini { 0.78 } else { 1. };
+    let mut column = div()
+        .flex()
+        .flex_col()
+        .gap(px(14.))
+        .when(mini, |column| column.pt(px(18.)).px(px(8.)))
+        .child(
+            div()
+                .type_style(ui::text::CAPTION)
+                .text_color(palette.on_field_muted)
+                .child(ShimmerText::new(label)),
+        );
     for (index, width) in [420., 360., 400., 300., 380.].into_iter().enumerate() {
+        let width = width * scale;
         column = column.child(if reduced_motion {
             div()
                 .w(px(width))
