@@ -170,24 +170,50 @@ pub fn unavailable(message: String) -> SharedJob {
     }))
 }
 
-fn cache_path(key: &str, asin: &str, start_ms: u64) -> Option<PathBuf> {
-    let books = crate::backend::books_directory(key)?;
+/// `Transcripts/<asin>/<locale>/<start-ms>.json`: one transcript per
+/// language, so a chapter transcribed with the wrong language's model is
+/// never shown once the right one is in use.
+fn cache_path(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<PathBuf> {
     Some(
-        books
-            .parent()?
-            .join("Transcripts")
+        transcripts_directory(key)?
+            .join(asin)
+            .join(locale)
+            .join(format!("{start_ms}.json")),
+    )
+}
+
+/// Before transcripts were kept per language they sat directly under the
+/// book, and every one came from the English (US) model.
+fn legacy_cache_path(key: &str, asin: &str, start_ms: u64) -> Option<PathBuf> {
+    Some(
+        transcripts_directory(key)?
             .join(asin)
             .join(format!("{start_ms}.json")),
     )
 }
 
-fn cached(key: &str, asin: &str, start_ms: u64) -> Option<Vec<Line>> {
-    let bytes = std::fs::read(cache_path(key, asin, start_ms)?).ok()?;
-    serde_json::from_slice(&bytes).ok()
+fn transcripts_directory(key: &str) -> Option<PathBuf> {
+    Some(
+        crate::backend::books_directory(key)?
+            .parent()?
+            .join("Transcripts"),
+    )
 }
 
-fn store(key: &str, asin: &str, start_ms: u64, lines: &[Line]) {
-    if let Some(path) = cache_path(key, asin, start_ms)
+fn cached(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<Vec<Line>> {
+    let read = |path: PathBuf| -> Option<Vec<Line>> {
+        serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    };
+    read(cache_path(key, asin, locale, start_ms)?).or_else(|| {
+        (locale == "en-US")
+            .then(|| legacy_cache_path(key, asin, start_ms))
+            .flatten()
+            .and_then(read)
+    })
+}
+
+fn store(key: &str, asin: &str, locale: &str, start_ms: u64, lines: &[Line]) {
+    if let Some(path) = cache_path(key, asin, locale, start_ms)
         && let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
         && let Ok(bytes) = serde_json::to_vec(lines)
@@ -232,21 +258,34 @@ fn transcribe(span: &Span, mut on_line: impl FnMut(Line)) -> Result<Vec<Line>, S
                 text: value["text"].as_str().unwrap_or_default().to_string(),
             };
             lines.push(line.clone());
-            on_line(line);
+            on_line(for_display(span.locale, line));
         },
     )?;
-    store(&span.key, &span.asin, span.start_ms(), &lines);
+    store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
     Ok(lines)
+}
+
+/// The cache keeps what the model wrote; this is what read along shows.
+/// Apple's Malayalam model writes Manglish, so it goes back into Malayalam
+/// script here (and improving the conversion never needs a re-transcribe).
+fn for_display(locale: &str, mut line: Line) -> Line {
+    if locale == "ml-IN" {
+        line.text = crate::malayalam::from_manglish(&line.text);
+    }
+    line
 }
 
 /// Starts reading along `span`: from the cache, or by checking the model and
 /// transcribing on a worker thread. `next` is transcribed afterwards into the
 /// cache so the following chapter is ready when playback gets there.
 pub fn start(span: Span, next: Option<Span>) -> SharedJob {
-    if let Some(lines) = cached(&span.key, &span.asin, span.start_ms()) {
+    if let Some(lines) = cached(&span.key, &span.asin, span.locale, span.start_ms()) {
         let job = Arc::new(Mutex::new(Job {
             phase: Phase::Ready,
-            lines,
+            lines: lines
+                .into_iter()
+                .map(|line| for_display(span.locale, line))
+                .collect(),
         }));
         if let Some(next) = next {
             std::thread::spawn(move || prefetch(next));
@@ -282,7 +321,7 @@ pub fn start(span: Span, next: Option<Span>) -> SharedJob {
 }
 
 fn prefetch(span: Span) {
-    if cached(&span.key, &span.asin, span.start_ms()).is_none()
+    if cached(&span.key, &span.asin, span.locale, span.start_ms()).is_none()
         && model_status(span.locale) == Ok(true)
     {
         let _ = transcribe(&span, |_| {});

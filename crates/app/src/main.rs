@@ -2,6 +2,7 @@
 mod backend;
 mod books;
 mod library;
+mod malayalam;
 mod playback;
 mod player;
 mod region;
@@ -227,6 +228,8 @@ struct Shell {
     pending_purchase: Option<audible::Asin>,
     /// The Account card is asking to confirm a store change.
     confirm_sign_out: bool,
+    /// The Storage card is asking to confirm removing every download.
+    confirm_clear_downloads: bool,
     read_along_open: bool,
     /// The sleep timer choice behind `sleep`, for the menu's checkmark.
     sleep_choice: &'static str,
