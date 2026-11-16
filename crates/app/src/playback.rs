@@ -371,15 +371,33 @@ impl Shell {
         let Some(audio) = backend::downloaded_path(&active.account_key, &active.asin) else {
             return;
         };
-        let language = match &self.account {
-            Account::Ready(library) => library
-                .items
-                .iter()
-                .find(|item| item.asin == active.asin)
-                .and_then(|item| item.product.language.clone()),
-            _ => None,
+        let (language, marketplace) = match &self.account {
+            Account::Ready(library) => (
+                library
+                    .items
+                    .iter()
+                    .find(|item| item.asin == active.asin)
+                    .and_then(|item| item.product.language.clone()),
+                library.marketplace.as_str(),
+            ),
+            _ => (None, ""),
         };
-        let locale = transcript::locale_for(language.as_deref());
+        let locale = match transcript::locale_for(language.as_deref(), marketplace) {
+            Ok(locale) => locale,
+            // Say so rather than transcribing with the wrong language's model.
+            Err(message) => {
+                self.read_along = Some(ReadAlong {
+                    asin: active.asin.clone(),
+                    start_ms,
+                    locale: "",
+                    job: transcript::unavailable(message),
+                    downloading: false,
+                });
+                self.read_along_follow.reset();
+                self.mini_follow.reset();
+                return;
+            }
+        };
         let span = |start: f64, end: f64| transcript::Span {
             key: active.account_key.clone(),
             asin: active.asin.to_string(),

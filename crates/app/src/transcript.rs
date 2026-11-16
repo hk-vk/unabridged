@@ -82,20 +82,92 @@ fn run(args: &[&str], mut on_line: impl FnMut(&serde_json::Value)) -> Result<(),
     }
 }
 
-/// The helper's locale for a book's `language` ("english", "german", …).
-pub fn locale_for(language: Option<&str>) -> &'static str {
-    match language.map(|l| l.to_ascii_lowercase()).as_deref() {
-        Some("german") => "de-DE",
-        Some("french") => "fr-FR",
-        Some("spanish") => "es-ES",
-        Some("italian") => "it-IT",
-        Some("portuguese") => "pt-BR",
-        Some("japanese") => "ja-JP",
-        Some("chinese" | "mandarin_chinese") => "zh-CN",
-        Some("korean") => "ko-KR",
-        Some("hindi") => "hi-IN",
-        _ => "en-US",
-    }
+/// The speech model locale for a book's Audible `language` ("english",
+/// "mandarin_chinese", …), using the store (`marketplace`, its display name,
+/// such as "United Kingdom") to pick the regional variant where the language
+/// has several.
+///
+/// Covers every language Apple's on-device transcriber offers (macOS 26).
+/// `Err` holds the message to show for any other language, rather than
+/// running the book through a model for the wrong language. A book with no
+/// language is assumed to be English.
+pub fn locale_for(language: Option<&str>, marketplace: &str) -> Result<&'static str, String> {
+    let language = language
+        .map(|l| l.trim().to_ascii_lowercase().replace([' ', '-'], "_"))
+        .filter(|l| !l.is_empty());
+    let locale = match language.as_deref().unwrap_or("english") {
+        "english" => match marketplace {
+            "United Kingdom" => "en-GB",
+            "Australia" => "en-AU",
+            "Canada" => "en-CA",
+            "India" => "en-IN",
+            _ => "en-US",
+        },
+        "french" => match marketplace {
+            "Canada" => "fr-CA",
+            _ => "fr-FR",
+        },
+        "spanish" => match marketplace {
+            "Spain" => "es-ES",
+            "United States" => "es-US",
+            _ => "es-MX",
+        },
+        // Audible's Portuguese catalogue is mostly Brazilian.
+        "portuguese" | "brazilian_portuguese" => "pt-BR",
+        "european_portuguese" => "pt-PT",
+        "german" => "de-DE",
+        "italian" => "it-IT",
+        "japanese" => "ja-JP",
+        "korean" => "ko-KR",
+        "chinese" | "mandarin_chinese" | "simplified_chinese" => "zh-CN",
+        "traditional_chinese" => "zh-TW",
+        "cantonese" => "yue-CN",
+        "hindi" => "hi-IN",
+        "bengali" | "bangla" => "bn-IN",
+        "gujarati" => "gu-IN",
+        "kannada" => "kn-IN",
+        "kashmiri" => "ks-IN",
+        "maithili" => "mai-IN",
+        "malayalam" => "ml-IN",
+        "marathi" => "mr-IN",
+        "nepali" => "ne-IN",
+        "odia" | "oriya" => "or-IN",
+        "punjabi" => "pa-IN",
+        "tamil" => "ta-IN",
+        "telugu" => "te-IN",
+        "urdu" => "ur-IN",
+        other => {
+            return Err(format!(
+                "Read along isn’t available for books in {} yet.",
+                language_name(other)
+            ));
+        }
+    };
+    Ok(locale)
+}
+
+/// "mandarin_chinese" → "Mandarin Chinese".
+fn language_name(language: &str) -> String {
+    language
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A read-along that can't run for this book, showing `message`.
+pub fn unavailable(message: String) -> SharedJob {
+    Arc::new(Mutex::new(Job {
+        phase: Phase::Unsupported(message),
+        lines: Vec::new(),
+    }))
 }
 
 fn cache_path(key: &str, asin: &str, start_ms: u64) -> Option<PathBuf> {
@@ -274,7 +346,88 @@ mod tests {
         assert_eq!(current_line(&lines, 12.2), Some(0));
         assert_eq!(current_line(&lines, 13.), Some(1));
         assert_eq!(current_line(&lines, 99.), Some(2));
-        assert_eq!(locale_for(Some("German")), "de-DE");
-        assert_eq!(locale_for(None), "en-US");
+    }
+
+    #[test]
+    fn languages_map_to_the_right_model() {
+        let us = "United States";
+        assert_eq!(locale_for(Some("German"), us), Ok("de-DE"));
+        assert_eq!(locale_for(None, us), Ok("en-US"));
+        assert_eq!(locale_for(Some(""), us), Ok("en-US"));
+        // The store picks the regional variant.
+        assert_eq!(locale_for(Some("english"), "United Kingdom"), Ok("en-GB"));
+        assert_eq!(locale_for(None, "India"), Ok("en-IN"));
+        assert_eq!(locale_for(Some("english"), "Australia"), Ok("en-AU"));
+        assert_eq!(locale_for(Some("french"), "Canada"), Ok("fr-CA"));
+        assert_eq!(locale_for(Some("french"), "France"), Ok("fr-FR"));
+        assert_eq!(locale_for(Some("spanish"), "Spain"), Ok("es-ES"));
+        assert_eq!(locale_for(Some("spanish"), us), Ok("es-US"));
+        assert_eq!(locale_for(Some("portuguese"), "Brazil"), Ok("pt-BR"));
+        // Languages beyond the original ten.
+        assert_eq!(locale_for(Some("tamil"), "India"), Ok("ta-IN"));
+        assert_eq!(locale_for(Some("Bengali"), "India"), Ok("bn-IN"));
+        assert_eq!(locale_for(Some("cantonese"), us), Ok("yue-CN"));
+        assert_eq!(locale_for(Some("mandarin_chinese"), us), Ok("zh-CN"));
+        // Anything else says so instead of falling back to English.
+        assert_eq!(
+            locale_for(Some("dutch"), us),
+            Err("Read along isn’t available for books in Dutch yet.".into())
+        );
+        assert_eq!(
+            locale_for(Some("brazilian_sign_language"), us),
+            Err("Read along isn’t available for books in Brazilian Sign Language yet.".into())
+        );
+    }
+
+    /// Every locale we map to must be one Apple's transcriber offers
+    /// (`SpeechTranscriber.supportedLocales` on macOS 26).
+    #[test]
+    fn mapped_locales_are_ones_apple_supports() {
+        const APPLE: &[&str] = &[
+            "bn-IN", "de-AT", "de-CH", "de-DE", "en-AU", "en-CA", "en-GB", "en-IE", "en-IN",
+            "en-NZ", "en-SG", "en-US", "en-ZA", "es-CL", "es-ES", "es-MX", "es-US", "fr-BE",
+            "fr-CA", "fr-CH", "fr-FR", "gu-IN", "hi-IN", "it-CH", "it-IT", "ja-JP", "kn-IN",
+            "ko-KR", "ks-IN", "mai-IN", "ml-IN", "mr-IN", "ne-IN", "or-IN", "pa-IN", "pt-BR",
+            "pt-PT", "ta-IN", "te-IN", "ur-IN", "yue-CN", "zh-CN", "zh-HK", "zh-TW",
+        ];
+        let languages = [
+            "english",
+            "french",
+            "spanish",
+            "portuguese",
+            "brazilian_portuguese",
+            "european_portuguese",
+            "german",
+            "italian",
+            "japanese",
+            "korean",
+            "chinese",
+            "mandarin_chinese",
+            "simplified_chinese",
+            "traditional_chinese",
+            "cantonese",
+            "hindi",
+            "bengali",
+            "bangla",
+            "gujarati",
+            "kannada",
+            "kashmiri",
+            "maithili",
+            "malayalam",
+            "marathi",
+            "nepali",
+            "odia",
+            "oriya",
+            "punjabi",
+            "tamil",
+            "telugu",
+            "urdu",
+        ];
+        for marketplace in audible::Marketplace::ALL {
+            for language in languages {
+                let locale = locale_for(Some(language), marketplace.display_name()).unwrap();
+                assert!(APPLE.contains(&locale), "{language} → {locale}");
+            }
+        }
     }
 }
