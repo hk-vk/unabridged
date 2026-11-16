@@ -95,6 +95,7 @@ impl Shell {
             refreshing: false,
             pending_purchase: None,
             confirm_sign_out: false,
+            confirm_clear_downloads: false,
             read_along_open: false,
             sleep_choice: "Off",
             prefs: backend::load_playback(),

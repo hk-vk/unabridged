@@ -371,6 +371,80 @@ impl Shell {
         }
     }
 
+    /// Chooses the quality for downloads from now on.
+    pub(crate) fn set_download_quality(
+        &mut self,
+        quality: backend::DownloadQuality,
+        cx: &mut Context<Self>,
+    ) {
+        self.prefs.download_quality = quality;
+        self.save_prefs(cx);
+        cx.notify();
+    }
+
+    /// The book that must not be deleted right now: the one playing, or the
+    /// one downloading.
+    pub(crate) fn in_use(&self, asin: &audible::Asin) -> bool {
+        self.player.as_ref().is_some_and(|p| &p.asin == asin)
+            || self.download.as_ref().is_some_and(|d| &d.asin == asin)
+    }
+
+    /// Deletes one downloaded book to free space.
+    pub(crate) fn remove_download(&mut self, asin: audible::Asin, cx: &mut Context<Self>) {
+        let Account::Ready(library) = &self.account else {
+            return;
+        };
+        if self.in_use(&asin) {
+            return;
+        }
+        self.download_notice = Some(
+            match backend::remove_download(&library.account_key, &asin) {
+                Ok(bytes) => format!(
+                    "Removed the download and freed {}.",
+                    backend::size_label(bytes)
+                ),
+                Err(error) => format!("Could not remove the download: {error}"),
+            },
+        );
+        cx.notify();
+    }
+
+    /// Deletes every downloaded book except the one playing or downloading.
+    pub(crate) fn remove_all_downloads(&mut self, cx: &mut Context<Self>) {
+        self.confirm_clear_downloads = false;
+        let Account::Ready(library) = &self.account else {
+            return;
+        };
+        let key = library.account_key.clone();
+        let (mut freed, mut removed, mut failed) = (0, 0, 0);
+        for book in backend::downloaded_books(&key) {
+            if self.in_use(&book.asin) {
+                continue;
+            }
+            match backend::remove_download(&key, &book.asin) {
+                Ok(bytes) => {
+                    freed += bytes;
+                    removed += 1;
+                }
+                Err(_) => failed += 1,
+            }
+        }
+        self.download_notice = Some(match (removed, failed) {
+            (0, 0) => "Nothing to remove.".to_string(),
+            (_, 0) => format!(
+                "Removed {} and freed {}.",
+                model::format::plural(removed, "download"),
+                backend::size_label(freed)
+            ),
+            _ => format!(
+                "Removed {}, but {} could not be removed.",
+                model::format::plural(removed, "download"),
+                model::format::plural(failed, "book")
+            ),
+        });
+        cx.notify();
+    }
+
     pub(crate) fn download(
         &mut self,
         key: String,
@@ -389,9 +463,10 @@ impl Shell {
         });
         self.download_notice = None;
         cx.notify();
+        let quality = self.prefs.download_quality;
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { backend::download(&key, asin, event) })
+                .background_spawn(async move { backend::download(&key, asin, quality, event) })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.download = None;

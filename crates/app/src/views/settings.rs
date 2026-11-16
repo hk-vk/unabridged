@@ -240,45 +240,176 @@ impl Shell {
         };
         let theme = cx.theme().clone();
         let directory = backend::books_directory(&library.account_key)?;
-        let (count, bytes) = std::fs::read_dir(&directory)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|entry| {
-                        entry
-                            .path()
-                            .extension()
-                            .is_some_and(|extension| extension == "m4b" || extension == "m4a")
+
+        // Download quality: applies to new downloads.
+        let current = self.prefs.download_quality;
+        let qualities = backend::DownloadQuality::ALL
+            .into_iter()
+            .map(|quality| {
+                Button::new(format!("download-quality-{}", quality.label()))
+                    .label(quality.label())
+                    .variant(if quality == current {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Secondary
                     })
-                    .fold((0_usize, 0_u64), |(count, bytes), entry| {
-                        (
-                            count + 1,
-                            bytes + entry.metadata().map(|m| m.len()).unwrap_or(0),
-                        )
-                    })
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.set_download_quality(quality, cx)),
+                    )
             })
-            .unwrap_or((0, 0));
-        let summary = match count {
-            0 => "No books downloaded yet.".to_string(),
-            1 => format!("1 book, {}", size_label(bytes)),
-            _ => format!("{count} books, {}", size_label(bytes)),
+            .collect::<Vec<_>>();
+        let quality_caption = match current {
+            backend::DownloadQuality::High => {
+                "Best sound, about 55 MB per hour of listening. Applies to new downloads."
+            }
+            backend::DownloadQuality::Standard => {
+                "Half the size, about 28 MB per hour. Voices still sound clear. Applies to new downloads."
+            }
         };
-        let row = setting_row(
-            "Downloaded books".into(),
-            summary,
-            Button::new("settings-reveal")
-                .label("Show in Finder")
-                .icon(Icon::Folder)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let _ = std::fs::create_dir_all(&directory);
-                    if let Err(error) = std::process::Command::new("open").arg(&directory).spawn() {
-                        this.download_notice = Some(format!("Could not open Finder: {error}"));
-                        cx.notify();
-                    }
-                })),
+        let quality_row = setting_row(
+            "Download quality".into(),
+            quality_caption.into(),
+            div().flex().gap(px(8.)).children(qualities),
             &theme,
         );
-        Some(settings_section(Icon::HardDrive, "Storage", row, cx))
+
+        // What is downloaded, and how to free the space.
+        let books = backend::downloaded_books(&library.account_key);
+        let total: u64 = books.iter().map(|book| book.bytes).sum();
+        let removable = books.iter().filter(|book| !self.in_use(&book.asin)).count();
+        let summary = match books.len() {
+            0 => "No books downloaded yet.".to_string(),
+            1 => format!("1 book, {} on this Mac.", backend::size_label(total)),
+            count => format!("{count} books, {} on this Mac.", backend::size_label(total)),
+        };
+        let caption = if self.confirm_clear_downloads {
+            let kept = books.len() - removable;
+            format!(
+                "Remove {} from this Mac?{} Your progress and bookmarks stay, and you can download them again.",
+                model::format::plural(removable as u64, "book"),
+                if kept > 0 {
+                    " The book you’re listening to stays."
+                } else {
+                    ""
+                }
+            )
+        } else {
+            summary
+        };
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .when(!self.confirm_clear_downloads, |row| {
+                row.child(
+                    Button::new("settings-reveal")
+                        .label("Show in Finder")
+                        .icon(Icon::Folder)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let _ = std::fs::create_dir_all(&directory);
+                            if let Err(error) =
+                                std::process::Command::new("open").arg(&directory).spawn()
+                            {
+                                this.download_notice =
+                                    Some(format!("Could not open Finder: {error}"));
+                                cx.notify();
+                            }
+                        })),
+                )
+                .when(removable > 0, |row| {
+                    row.child(
+                        Button::new("settings-clear-downloads")
+                            .label("Remove all")
+                            .icon(Icon::Delete)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirm_clear_downloads = true;
+                                cx.notify();
+                            })),
+                    )
+                })
+            })
+            .when(self.confirm_clear_downloads, |row| {
+                row.child(
+                    Button::new("settings-cancel-clear")
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_clear_downloads = false;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("settings-confirm-clear")
+                        .label("Remove")
+                        .variant(ButtonVariant::Primary)
+                        .on_click(cx.listener(|this, _, _, cx| this.remove_all_downloads(cx))),
+                )
+            });
+        let downloads_row = setting_row("Downloaded books".into(), caption, actions, &theme);
+
+        // One line per book, biggest first, each removable on its own.
+        let rows =
+            books.iter().map(|book| {
+                let title = library
+                    .items
+                    .iter()
+                    .find(|item| item.asin == book.asin)
+                    .and_then(|item| item.product.title.clone())
+                    .unwrap_or_else(|| book.asin.to_string());
+                let in_use = self.in_use(&book.asin);
+                let asin = book.asin.clone();
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .min_h(px(30.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .type_style(ui::text::BODY)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .type_style(ui::text::CAPTION.tabular())
+                            .text_color(theme.colors.ink_secondary)
+                            .child(if in_use {
+                                format!("{} · in use", backend::size_label(book.bytes))
+                            } else {
+                                backend::size_label(book.bytes)
+                            }),
+                    )
+                    .child(div().flex_none().w(px(30.)).when(!in_use, |slot| {
+                        slot.child(
+                            IconButton::new(
+                                format!("remove-download-{}", book.asin),
+                                Icon::Delete,
+                                16.,
+                            )
+                            .hit_area(30.)
+                            .color(theme.colors.ink_secondary)
+                            .hover_fill(theme.colors.fill)
+                            .tooltip("Remove download")
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| this.remove_download(asin.clone(), cx),
+                            )),
+                        )
+                    }))
+            });
+
+        let content = div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(quality_row)
+            .child(div().h(px(1.)).bg(theme.colors.hairline))
+            .child(downloads_row)
+            .when(!books.is_empty(), |content| {
+                content.child(div().flex().flex_col().gap(px(2.)).children(rows))
+            });
+        Some(settings_section(Icon::HardDrive, "Storage", content, cx))
     }
 }
 
@@ -339,15 +470,4 @@ fn setting_row(
                 ),
         )
         .child(action)
-}
-
-fn size_label(bytes: u64) -> String {
-    const GB: f64 = 1024. * 1024. * 1024.;
-    const MB: f64 = 1024. * 1024.;
-    let bytes = bytes as f64;
-    if bytes >= GB {
-        format!("{:.1} GB", bytes / GB)
-    } else {
-        format!("{:.0} MB", bytes / MB)
-    }
 }

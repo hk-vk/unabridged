@@ -281,9 +281,78 @@ pub fn downloaded_path(key: &str, asin: &audible::Asin) -> Option<std::path::Pat
         .find(|path| path.is_file())
 }
 
+/// "314 MB", "1.2 GB".
+pub fn size_label(bytes: u64) -> String {
+    const GB: f64 = 1024. * 1024. * 1024.;
+    const MB: f64 = 1024. * 1024.;
+    let bytes = bytes as f64;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes / GB)
+    } else {
+        format!("{:.0} MB", bytes / MB)
+    }
+}
+
+/// A downloaded book and the space it takes.
+#[derive(Clone, Debug)]
+pub struct DownloadedBook {
+    pub asin: audible::Asin,
+    pub bytes: u64,
+}
+
+/// Every downloaded book for the account, largest first.
+pub fn downloaded_books(key: &str) -> Vec<DownloadedBook> {
+    let Some(directory) = books_directory(key) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut books: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let extension = path.extension()?.to_str()?;
+            if extension != "m4b" && extension != "m4a" {
+                return None;
+            }
+            let asin = audible::Asin::new(path.file_stem()?.to_str()?).ok()?;
+            let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            Some(DownloadedBook { asin, bytes })
+        })
+        .collect();
+    books.sort_by_key(|book| std::cmp::Reverse(book.bytes));
+    books
+}
+
+/// Deletes a book's audio and any leftovers of an interrupted download
+/// (`.aaxc`, `.aax`, `.part`). Positions, bookmarks and read-along
+/// transcripts stay, so a re-download picks up where it was.
+pub fn remove_download(key: &str, asin: &audible::Asin) -> anyhow::Result<u64> {
+    let directory = books_directory(key).ok_or_else(|| anyhow::anyhow!("No books folder"))?;
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return Ok(0);
+    };
+    let prefix = asin.to_string();
+    let mut freed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        // "<asin>.m4b", "<asin>.aaxc", "<asin>.aaxc.part", …
+        if name.split('.').next() != Some(prefix.as_str()) {
+            continue;
+        }
+        let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        std::fs::remove_file(entry.path())?;
+        freed += bytes;
+    }
+    Ok(freed)
+}
+
 pub fn download(
     key: &str,
     asin: audible::Asin,
+    quality: DownloadQuality,
     progress: Arc<std::sync::Mutex<audible::DownloadEvent>>,
 ) -> anyhow::Result<std::path::PathBuf> {
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -293,6 +362,7 @@ pub fn download(
     let client = Audible::from_store(store()?, PROFILE)?
         .ok_or_else(|| anyhow::anyhow!("Sign in to download books"))?;
     let mut request = audible::DownloadRequest::new(asin, account_directory(key)?.join("Books"));
+    request.quality = quality.audible();
     request.progress = Some(Arc::new(move |event| {
         if let Ok(mut current) = progress.lock() {
             *current = event;
@@ -742,11 +812,41 @@ fn appearance_path() -> anyhow::Result<std::path::PathBuf> {
         .join("Library/Application Support/Better Audible/appearance.json"))
 }
 
-/// Speed and volume, carried over between launches.
+/// Speed, volume and download quality, carried over between launches.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PlaybackPrefs {
     pub speed: Option<f32>,
     pub volume: Option<f32>,
+    #[serde(default)]
+    pub download_quality: DownloadQuality,
+}
+
+/// How good, and how big, new downloads are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DownloadQuality {
+    /// Audible's highest bitrate, usually about 128 kbps: around 55 MB an hour.
+    #[default]
+    High,
+    /// Audible's lower bitrate, about 64 kbps: half the size, fine for speech.
+    Standard,
+}
+
+impl DownloadQuality {
+    pub const ALL: [Self; 2] = [Self::High, Self::Standard];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::High => "High",
+            Self::Standard => "Standard",
+        }
+    }
+
+    fn audible(self) -> audible::models::Quality {
+        match self {
+            Self::High => audible::models::Quality::High,
+            Self::Standard => audible::models::Quality::Normal,
+        }
+    }
 }
 
 fn playback_path() -> anyhow::Result<std::path::PathBuf> {
