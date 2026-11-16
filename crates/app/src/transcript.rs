@@ -245,10 +245,18 @@ impl Span {
     }
 }
 
-fn transcribe(span: &Span, mut on_line: impl FnMut(Line)) -> Result<Vec<Line>, String> {
+/// Transcribes `from..to` of the span's audio, handing each finished line
+/// (ready to show) to `on_line`. Returns the lines as the model wrote them,
+/// for the cache.
+fn transcribe(
+    span: &Span,
+    from: f64,
+    to: f64,
+    mut on_line: impl FnMut(Line),
+) -> Result<Vec<Line>, String> {
     let mut lines = Vec::new();
     let audio = span.audio.to_string_lossy().to_string();
-    let (start, end) = (format!("{:.3}", span.start), format!("{:.3}", span.end));
+    let (start, end) = (format!("{from:.3}"), format!("{to:.3}"));
     run(
         &["transcribe", &audio, &start, &end, span.locale],
         |value| {
@@ -261,8 +269,22 @@ fn transcribe(span: &Span, mut on_line: impl FnMut(Line)) -> Result<Vec<Line>, S
             on_line(for_display(span.locale, line));
         },
     )?;
-    store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
     Ok(lines)
+}
+
+/// How far before the playhead transcription starts, so the sentence being
+/// spoken is caught whole.
+const LEAD_IN: f64 = 15.;
+
+/// Where to start transcribing a chapter when listening from `playhead`:
+/// just before it, or the chapter start when the playhead is near it.
+fn split_point(span: &Span, playhead: f64) -> f64 {
+    let split = (playhead - LEAD_IN).clamp(span.start, span.end);
+    if split - span.start < LEAD_IN * 2. {
+        span.start
+    } else {
+        split
+    }
 }
 
 /// The cache keeps what the model wrote; this is what read along shows.
@@ -278,7 +300,12 @@ fn for_display(locale: &str, mut line: Line) -> Line {
 /// Starts reading along `span`: from the cache, or by checking the model and
 /// transcribing on a worker thread. `next` is transcribed afterwards into the
 /// cache so the following chapter is ready when playback gets there.
-pub fn start(span: Span, next: Option<Span>) -> SharedJob {
+///
+/// A chapter is transcribed from just before `playhead` to its end first, so
+/// the lines being listened to appear within seconds even deep into a long
+/// chapter; the part before the playhead follows and is added in one go,
+/// so the list moves once instead of with every line.
+pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
     if let Some(lines) = cached(&span.key, &span.asin, span.locale, span.start_ms()) {
         let job = Arc::new(Mutex::new(Job {
             phase: Phase::Ready,
@@ -304,13 +331,33 @@ pub fn start(span: Span, next: Option<Span>) -> SharedJob {
             Err(message) => return set_phase(&worker, Phase::Unsupported(message)),
         }
         set_phase(&worker, Phase::Transcribing);
-        let result = transcribe(&span, |line| {
+        let split = split_point(&span, playhead);
+        let push = |line: Line| {
             if let Ok(mut job) = worker.lock() {
                 job.lines.push(line);
             }
+        };
+        let result = transcribe(&span, split, span.end, push).and_then(|ahead| {
+            if split <= span.start {
+                return Ok(ahead);
+            }
+            let mut before = transcribe(&span, span.start, split, |_| {})?;
+            if let Ok(mut job) = worker.lock() {
+                let shown: Vec<Line> = before
+                    .iter()
+                    .cloned()
+                    .map(|line| for_display(span.locale, line))
+                    .collect();
+                job.lines.splice(0..0, shown);
+            }
+            before.extend(ahead);
+            Ok(before)
         });
         match result {
-            Ok(_) => set_phase(&worker, Phase::Ready),
+            Ok(lines) => {
+                store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
+                set_phase(&worker, Phase::Ready);
+            }
             Err(message) => set_phase(&worker, Phase::Failed(message)),
         }
         if let Some(next) = next {
@@ -323,8 +370,9 @@ pub fn start(span: Span, next: Option<Span>) -> SharedJob {
 fn prefetch(span: Span) {
     if cached(&span.key, &span.asin, span.locale, span.start_ms()).is_none()
         && model_status(span.locale) == Ok(true)
+        && let Ok(lines) = transcribe(&span, span.start, span.end, |_| {})
     {
-        let _ = transcribe(&span, |_| {});
+        store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
     }
 }
 

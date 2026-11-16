@@ -418,7 +418,7 @@ impl Shell {
             asin: active.asin.clone(),
             start_ms,
             locale,
-            job: transcript::start(span(start, end), next),
+            job: transcript::start(span(start, end), next, timeline.position),
             downloading: false,
         });
         self.read_along_follow.reset();
