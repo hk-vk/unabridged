@@ -38,8 +38,18 @@ impl Shell {
             None => "left in this book".to_string(),
         };
         let fraction = timeline.fraction();
+        // The bar is the chapter: time into it on the left, time left in it
+        // on the right, and underneath, when it ends on the clock (at the
+        // current speed) and how much of the book is left.
         let time = model::format::clock(timeline.elapsed());
+        let chapter_countdown = model::format::countdown(timeline.remaining());
+        let ends = ends_at(timeline.remaining(), active.player.rate());
         let book_left = model::format::book_left_long(timeline.book_remaining());
+        let progress_note = if timeline.chapter.is_some() {
+            format!("Chapter ends at {ends} · {}", lowercase_first(&book_left))
+        } else {
+            format!("Ends at {ends}")
+        };
         let left = model::format::clock(timeline.remaining());
         let playing = active.player.is_playing();
         let speed = active.player.rate();
@@ -259,10 +269,17 @@ impl Shell {
                                     .flex()
                                     .justify_between()
                                     .mt(px(6.))
-                                    .type_style(ui::text::CAPTION)
+                                    .type_style(ui::text::CAPTION.tabular())
                                     .text_color(palette.on_field_muted)
                                     .child(time)
-                                    .child(book_left),
+                                    .child(chapter_countdown),
+                            )
+                            .child(
+                                div()
+                                    .mt(px(4.))
+                                    .type_style(ui::text::CAPTION)
+                                    .text_color(palette.on_field_muted)
+                                    .child(progress_note),
                             ),
                     ),
             )
@@ -421,6 +438,26 @@ impl Shell {
             )
             .into_any_element()
     }
+}
+
+/// The wall-clock time that `remaining` audio finishes at `rate`: "9:32 PM".
+fn ends_at(remaining: std::time::Duration, rate: f32) -> String {
+    use chrono::Timelike;
+    let seconds = remaining.as_secs_f64() / f64::from(rate.max(0.1));
+    let at = chrono::Local::now() + chrono::Duration::seconds(seconds.round() as i64);
+    model::format::time_of_day(model::book::TimeOfDay {
+        hour: at.hour() as u8,
+        minute: at.minute() as u8,
+    })
+}
+
+/// "About 2 hours left in the book" → "about 2 hours left in the book".
+fn lowercase_first(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_lowercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// Where a transcript is shown; each place keeps its own scroll and style.
