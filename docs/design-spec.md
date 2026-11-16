@@ -11,7 +11,7 @@ Native macOS Audible client in Rust + GPUI. Sign in to the user's own Audible ac
 (position sync), download and play offline, explore the catalog. Premium, calm, native-Mac feel.
 
 ## Fonts (all open source, bundle in the app)
-- UI: Geist (Regular 400, Medium 500, SemiBold 600)
+- UI: Allo by Josh Puckett (Regular 400, Medium 500, SemiBold 600; OFL, https://allo.joshpuckett.me)
 - Book titles and the "time left" sentence: Literata (serif)
 - Time readouts (big time-left numeral, percentages, menu bar time): Geist Pixel
 

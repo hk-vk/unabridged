@@ -87,7 +87,7 @@ impl Shell {
             .size_full()
             .flex()
             .flex_col()
-            .font_family("Geist")
+            .font_family(ui::typography::family::UI)
             .bg(linear_gradient(
                 180.,
                 linear_color_stop(palette.field, 0.),

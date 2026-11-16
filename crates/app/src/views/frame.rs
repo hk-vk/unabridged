@@ -462,7 +462,7 @@ impl Render for Shell {
             }))
             .bg(theme.colors.window)
             .text_color(theme.colors.ink)
-            .font_family("Geist")
+            .font_family(ui::typography::family::UI)
             .child(self.sidebar(cx))
             .child(
                 div()

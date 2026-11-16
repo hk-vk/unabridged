@@ -12,15 +12,15 @@ use gpui_kit::{App, FontFeatures, FontWeight, Styled, px, relative};
 
 /// Font family names as the bundled files report them.
 pub mod family {
-    /// Interface text: Geist (400, 500, 600).
-    pub const UI: &str = "Geist";
+    /// Interface text: Allo (400, 500, 600).
+    pub const UI: &str = "Allo";
     /// Book titles and listening sentences: Literata.
     pub const BOOK: &str = "Literata";
     /// Time readouts: Geist Pixel (Square).
     pub const PIXEL: &str = "Geist Pixel";
 }
 
-/// Line height used where the design says `normal` for Geist.
+/// Line height used where the design says `normal` for interface text.
 const UI_LEADING: f32 = 1.25;
 
 /// A complete text style: family, size, weight, leading and figure style.
@@ -39,7 +39,7 @@ pub struct TypeStyle {
 }
 
 impl TypeStyle {
-    /// Geist at `size`, regular weight.
+    /// Interface text (Allo) at `size`, regular weight.
     pub const fn ui(size: f32) -> Self {
         Self {
             family: family::UI,
@@ -188,9 +188,9 @@ pub fn tabular_figures() -> FontFeatures {
 
 /// The bundled font files (OFL; licences next to them in `assets/fonts`).
 const FONT_FILES: [&[u8]; 5] = [
-    include_bytes!("../../../assets/fonts/geist/Geist-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/geist/Geist-Medium.ttf"),
-    include_bytes!("../../../assets/fonts/geist/Geist-SemiBold.ttf"),
+    include_bytes!("../../../assets/fonts/allo/Allo-Regular.otf"),
+    include_bytes!("../../../assets/fonts/allo/Allo-Medium.otf"),
+    include_bytes!("../../../assets/fonts/allo/Allo-SemiBold.otf"),
     include_bytes!("../../../assets/fonts/geist-pixel/GeistPixel-Square.ttf"),
     include_bytes!("../../../assets/fonts/literata/Literata-Regular.ttf"),
 ];
