@@ -35,6 +35,11 @@ todo = "warn"
 [patch.crates-io]
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 
-# GPUI is slow in unoptimised builds; optimise dependencies even in dev.
+# GPUI is slow in unoptimised builds; optimise dependencies even in dev, and
+# skip their debug info, which is most of the target directory's size.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
+
+[profile.dev]
+debug = "line-tables-only"
