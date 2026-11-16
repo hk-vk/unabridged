@@ -18,7 +18,11 @@ const DAYS_PER_WEEK: u64 = 7;
 /// "8:57", "14:02", "1:04:09": a clock readout, hours only when needed.
 pub fn clock(d: Duration) -> String {
     let s = d.as_secs();
-    let (h, m, s) = (s / SECS_PER_HOUR, s % SECS_PER_HOUR / SECS_PER_MIN, s % SECS_PER_MIN);
+    let (h, m, s) = (
+        s / SECS_PER_HOUR,
+        s % SECS_PER_HOUR / SECS_PER_MIN,
+        s % SECS_PER_MIN,
+    );
     if h > 0 {
         format!("{h}:{m:02}:{s:02}")
     } else {
@@ -68,7 +72,10 @@ pub fn book_left_long(d: Duration) -> String {
     if d < Duration::from_secs(SECS_PER_HOUR) {
         format!("{} left in the book", capitalize(&hours_minutes(d)))
     } else {
-        format!("About {} left in the book", plural(rounded_hours(d), "hour"))
+        format!(
+            "About {} left in the book",
+            plural(rounded_hours(d), "hour")
+        )
     }
 }
 
@@ -120,9 +127,7 @@ pub fn ago(age: Duration, today: usize) -> String {
         s if s < SECS_PER_HOUR => format!("{} ago", plural(s / SECS_PER_MIN, "minute")),
         s if s < SECS_PER_DAY => format!("{} ago", plural(s / SECS_PER_HOUR, "hour")),
         _ if days == 1 => "yesterday".into(),
-        _ if days < DAYS_PER_WEEK => {
-            WEEKDAYS[(today + 7 - (days as usize % 7)) % 7].to_string()
-        }
+        _ if days < DAYS_PER_WEEK => WEEKDAYS[(today + 7 - (days as usize % 7)) % 7].to_string(),
         _ if days < 2 * DAYS_PER_WEEK => "last week".into(),
         _ => format!("{} weeks ago", days / DAYS_PER_WEEK),
     }
@@ -171,9 +176,15 @@ pub fn listening_sentence(p: &ChapterProgress) -> String {
         p.chapter.title.clone()
     };
     let book_part = if p.book_remaining < Duration::from_secs(SECS_PER_HOUR) {
-        format!("{} in the book", spelled_plural(p.book_remaining.as_secs() / SECS_PER_MIN, "minute"))
+        format!(
+            "{} in the book",
+            spelled_plural(p.book_remaining.as_secs() / SECS_PER_MIN, "minute")
+        )
     } else {
-        format!("about {} in the book", spelled_plural(rounded_hours(p.book_remaining), "hour"))
+        format!(
+            "about {} in the book",
+            spelled_plural(rounded_hours(p.book_remaining), "hour")
+        )
     };
     format!("{chapter_part} left in {place}, and {book_part}.")
 }
@@ -199,9 +210,27 @@ pub fn plural(n: u64, unit: &str) -> String {
 /// Like [`plural`] but spells out numbers up to twenty: "nine hours".
 pub fn spelled_plural(n: u64, unit: &str) -> String {
     const WORDS: [&str; 21] = [
-        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-        "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
-        "eighteen", "nineteen", "twenty",
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
     ];
     let number = WORDS
         .get(n as usize)
@@ -250,7 +279,10 @@ mod tests {
     #[test]
     fn book_left_copy() {
         assert_eq!(book_left_short(mins(9 * 60 + 12)), "9 hr left in book");
-        assert_eq!(book_left_long(mins(9 * 60 + 12)), "About 9 hours left in the book");
+        assert_eq!(
+            book_left_long(mins(9 * 60 + 12)),
+            "About 9 hours left in the book"
+        );
         assert_eq!(book_left_long(mins(47)), "47 min left in the book");
     }
 
@@ -263,9 +295,21 @@ mod tests {
 
     #[test]
     fn times_of_day() {
-        assert_eq!(time_of_day(TimeOfDay { hour: 21, minute: 32 }), "9:32 PM");
+        assert_eq!(
+            time_of_day(TimeOfDay {
+                hour: 21,
+                minute: 32
+            }),
+            "9:32 PM"
+        );
         assert_eq!(time_of_day(TimeOfDay { hour: 0, minute: 5 }), "12:05 AM");
-        assert_eq!(time_of_day(TimeOfDay { hour: 12, minute: 0 }), "12:00 PM");
+        assert_eq!(
+            time_of_day(TimeOfDay {
+                hour: 12,
+                minute: 0
+            }),
+            "12:00 PM"
+        );
     }
 
     #[test]
@@ -283,13 +327,26 @@ mod tests {
         assert_eq!(ago(day * 22, SUNDAY), "3 weeks ago");
     }
 
-    fn progress(chapter_len: u64, into: u64, chapter_title: &str, book_left_min: u64) -> ChapterProgress {
+    fn progress(
+        chapter_len: u64,
+        into: u64,
+        chapter_title: &str,
+        book_left_min: u64,
+    ) -> ChapterProgress {
         let mut chapters = Vec::new();
         let mut start = Duration::ZERO;
         for i in 0..32 {
-            let duration = if i == 13 { Duration::from_secs(chapter_len) } else { mins(30) };
+            let duration = if i == 13 {
+                Duration::from_secs(chapter_len)
+            } else {
+                mins(30)
+            };
             chapters.push(Chapter {
-                title: if i == 13 { chapter_title.into() } else { String::new() },
+                title: if i == 13 {
+                    chapter_title.into()
+                } else {
+                    String::new()
+                },
                 start,
                 duration,
             });

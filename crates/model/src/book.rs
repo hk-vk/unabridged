@@ -172,7 +172,11 @@ impl Library {
 
     /// Items added within `window`, newest first.
     pub fn added_within(&self, window: Duration) -> Vec<&LibraryItem> {
-        let mut items: Vec<_> = self.items.iter().filter(|i| i.added_ago <= window).collect();
+        let mut items: Vec<_> = self
+            .items
+            .iter()
+            .filter(|i| i.added_ago <= window)
+            .collect();
         items.sort_by_key(|i| i.added_ago);
         items
     }

@@ -77,7 +77,11 @@ impl ChapterProgress {
     /// Whole percent of the book played, never 100 until the end.
     pub fn percent(&self) -> u32 {
         let pct = (self.book_fraction * 100.0).floor() as u32;
-        if self.book_remaining.is_zero() { 100 } else { pct.min(99) }
+        if self.book_remaining.is_zero() {
+            100
+        } else {
+            pct.min(99)
+        }
     }
 }
 
