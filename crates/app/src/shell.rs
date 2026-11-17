@@ -114,6 +114,7 @@ impl Shell {
         shell.restore(cx);
         cx.spawn(async move |this, cx| {
             let mut ticks = 0u32;
+            let mut shown_second = None;
             loop {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(200))
@@ -157,13 +158,21 @@ impl Shell {
                             this.follow_read_along(cx.reduce_motion());
                             cx.notify();
                         }
-                        if this.player.as_ref().is_some_and(|p| p.player.is_playing()) {
+                        if let Some(active) = this.player.as_ref().filter(|p| p.player.is_playing()) {
                             ticks += 1;
                             if ticks >= 150 {
                                 this.sync_position(cx);
                                 ticks = 0;
                             }
-                            cx.notify();
+                            // Times show whole seconds: redraw once a second, not
+                            // on every tick. Each redraw repaints the whole window.
+                            let second = active.player.position().max(0.) as u64;
+                            if shown_second != Some(second) {
+                                shown_second = Some(second);
+                                cx.notify();
+                            }
+                        } else {
+                            shown_second = None;
                         }
                     })
                     .is_err()

@@ -432,15 +432,8 @@ impl Shell {
                     let result = cx
                         .background_spawn(async move {
                             let path = backend::cover(&asin, &url)?;
-                            let palette = image::ImageReader::open(&path)
-                                .ok()
-                                .and_then(|reader| reader.with_guessed_format().ok())
-                                .and_then(|reader| reader.decode().ok())
-                                .and_then(|image| {
-                                    let pixels = image.thumbnail(128, 128).to_rgba8();
-                                    ui::theme::BookPalette::dominant_color(pixels.as_raw())
-                                })
-                                .map(ui::theme::BookPalette::from_cover_color);
+                            let palette =
+                                cover_color(&path).map(ui::theme::BookPalette::from_cover_color);
                             Ok::<_, anyhow::Error>((path, palette))
                         })
                         .await;
@@ -640,4 +633,33 @@ impl Shell {
             self.change_bookmark(asin, position, true, cx);
         }
     }
+}
+
+/// The cover's dominant colour, saved next to it (`<cover>.color`) so later
+/// launches skip decoding every full-size cover just to pick a colour.
+fn cover_color(path: &std::path::Path) -> Option<gpui_kit::Hsla> {
+    let saved = path.with_extension("color");
+    if let Ok(text) = std::fs::read_to_string(&saved) {
+        let parts: Vec<f32> = text.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        if let [h, s, l, a] = parts[..] {
+            return Some(gpui_kit::hsla(h, s, l, a));
+        }
+        if text.trim() == "none" {
+            return None;
+        }
+    }
+    let color = image::ImageReader::open(path)
+        .ok()
+        .and_then(|reader| reader.with_guessed_format().ok())
+        .and_then(|reader| reader.decode().ok())
+        .and_then(|image| {
+            let pixels = image.thumbnail(128, 128).to_rgba8();
+            ui::theme::BookPalette::dominant_color(pixels.as_raw())
+        });
+    let text = color.map_or_else(
+        || "none".to_owned(),
+        |c| format!("{} {} {} {}", c.h, c.s, c.l, c.a),
+    );
+    let _ = std::fs::write(&saved, text);
+    color
 }
