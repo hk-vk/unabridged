@@ -38,10 +38,10 @@ installed=$(pgrep -f "Applications/Better Audible.app/Contents/MacOS/better-audi
 if [ -n "$installed" ]; then kill -TERM "$installed"; sleep 2; fi
 
 log="$out/$label.log"
-# Launch through LaunchServices so the window comes to the front: GPUI does
-# not draw a window that is fully covered, and covers load only when drawn.
+# Launch in the background (-g), so the user's focus stays put. The tour
+# makes its windows invisible and click-through but keeps them drawn.
 : >"$log"
-open -n -a "$bundle" --env BETTER_AUDIBLE_TOUR=1 --env BETTER_AUDIBLE_TOUR_AUDIO="$audio" \
+open -g -n -a "$bundle" --env BETTER_AUDIBLE_TOUR=1 --env BETTER_AUDIBLE_TOUR_AUDIO="$audio" \
     --stdout "$log" --stderr "$out/$label.err"
 sleep 2
 pid=$(pgrep -f "^$bundle/Contents/MacOS/better-audible$" | head -1)
@@ -61,7 +61,8 @@ while [ "$(date +%s)" -lt "$end" ] && kill -0 "$pid" 2>/dev/null; do
             / Malloc Small$/ {m=$1" "$2} / IOSurface$/ {s=$1" "$2}
             /IOAccelerator \(graphics\)$/ {g=$1" "$2}
             END {printf "malloc %s, surfaces %s, gpu %s", m, s, g}')
-        images=$(heap -s "$pid" 2>/dev/null | sed -n 's/.* 992KB\[\([0-9]*\)\].*/\1/p' | head -1)
+        heap -s "$pid" >"$out/$label.$seen.heap" 2>/dev/null || true
+        images=$(cat "$out/$label.$seen.heap" | sed -n 's/.* 992KB\[\([0-9]*\)\].*/\1/p' | head -1)
         printf '%s\t%s\t%s%%\t%s\t1MB-images %s\n' "$step" "$mb" "$cpu" "$parts" "${images:-0}" | tee -a "$results"
         [ "$step" = "done" ] && end=0
     done

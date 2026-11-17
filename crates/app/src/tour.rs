@@ -12,10 +12,10 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
     if std::env::var_os("BETTER_AUDIBLE_TOUR").is_none() {
         return;
     }
-    // Float above other apps without taking focus: GPUI stops drawing a
-    // window that is fully covered, and covers load only when drawn.
+    // GPUI stops drawing a fully covered window, and covers load only when
+    // drawn: keep the window on top but invisible and click-through.
     let shell = handle.update(cx, |root, window, _| {
-        mini_player::float_everywhere(window);
+        ghost(window);
         root.view().clone().downcast::<Shell>().ok()
     });
     let Ok(Some(shell)) = shell else {
@@ -97,7 +97,12 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
         wait(15).await;
         println!("TOUR playing");
         shell.update(cx, |shell, cx| shell.open_mini_player(cx));
-        wait(10).await;
+        wait(1).await;
+        let mini = shell.update(cx, |shell, _| shell.mini_window);
+        if let Some(mini) = mini {
+            let _ = mini.update(cx, |_, window, _| ghost(window));
+        }
+        wait(9).await;
         println!("TOUR mini-player");
         shell.update(cx, |shell, cx| {
             if let Some(active) = &mut shell.player {
@@ -110,4 +115,18 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
         println!("TOUR done");
     })
     .detach();
+}
+
+fn ghost(window: &Window) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    unsafe extern "C" {
+        fn ba_window_ghost(view: *mut std::ffi::c_void);
+    }
+    if let Ok(handle) = HasWindowHandle::window_handle(window)
+        && let RawWindowHandle::AppKit(appkit) = handle.as_raw()
+    {
+        // SAFETY: `ns_view` is the live content view of this window, on the
+        // main thread.
+        unsafe { ba_window_ghost(appkit.ns_view.as_ptr()) }
+    }
 }

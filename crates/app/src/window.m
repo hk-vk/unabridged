@@ -53,3 +53,17 @@ void ba_window_float_everywhere(void *view) {
         [[window standardWindowButton:kind] setHidden:YES];
     }
 }
+
+// Measurement runs only: keeps the window "visible" to macOS, so it is still
+// drawn, while the user cannot see or click it and it never takes focus.
+void ba_window_ghost(void *view) {
+    NSWindow *window = ((__bridge NSView *)view).window;
+    if (window == nil) {
+        return;
+    }
+    window.level = NSFloatingWindowLevel;
+    window.alphaValue = 0.01;
+    window.ignoresMouseEvents = YES;
+    window.collectionBehavior |= NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                 NSWindowCollectionBehaviorFullScreenAuxiliary;
+}
