@@ -6,6 +6,7 @@ mod button;
 mod chip;
 mod controls;
 mod cover;
+mod cover_cache;
 mod menu;
 mod navigation;
 mod progress;
