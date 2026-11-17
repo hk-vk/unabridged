@@ -3,8 +3,6 @@ use crate::*;
 
 impl Shell {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let redirect =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Paste the final URL here"));
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search the Audible catalog"));
         let library_search = cx.new(|cx| {
@@ -76,7 +74,10 @@ impl Shell {
             account: Account::Loading,
             marketplace,
             suggested_marketplace,
-            redirect,
+            sign_in_note: None,
+            sign_in_watch: 0,
+            sign_in_clipboard: None,
+            connecting_after_sign_in: false,
             search,
             library_search,
             browse_name: None,

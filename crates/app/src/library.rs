@@ -151,39 +151,133 @@ impl Shell {
             Ok(url) => {
                 cx.open_url(url.as_str());
                 self.account = Account::SigningIn(Box::new(session));
+                self.sign_in_note = None;
+                self.watch_sign_in(cx);
             }
             Err(error) => self.account = Account::Error(error.to_string()),
         }
         cx.notify();
     }
 
-    pub(crate) fn finish_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens Amazon's sign-in page again for the same attempt.
+    pub(crate) fn reopen_sign_in(&mut self, cx: &mut Context<Self>) {
+        if let Account::SigningIn(session) = &self.account
+            && let Ok(url) = session.authorization_url()
+        {
+            cx.open_url(url.as_str());
+        }
+    }
+
+    pub(crate) fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.sign_in_watch += 1;
+        self.sign_in_note = None;
+        self.account = Account::SignedOut;
+        cx.notify();
+    }
+
+    /// While signing in, checks the browser tabs and the clipboard about once
+    /// a second for Amazon's redirect, and connects as soon as one appears.
+    fn watch_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.sign_in_watch += 1;
+        let watch = self.sign_in_watch;
+        self.sign_in_clipboard = cx.read_from_clipboard().and_then(|item| item.text());
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(1000))
+                    .await;
+                let scan = cx
+                    .background_spawn(async { browser_tab::find_redirect() })
+                    .await;
+                let keep_going = this
+                    .update(cx, |this, cx| {
+                        if this.sign_in_watch != watch
+                            || !matches!(this.account, Account::SigningIn(_))
+                        {
+                            return false;
+                        }
+                        match scan {
+                            browser_tab::Scan::Found(url) => {
+                                this.connect_sign_in(url, cx);
+                                return false;
+                            }
+                            browser_tab::Scan::Denied if this.sign_in_note.is_none() => {
+                                this.sign_in_note = Some((
+                                    "Better Audible can’t see your browser’s tabs. When the page says it can’t be found, press ⌘L then ⌘C to copy its address.".into(),
+                                    false,
+                                ));
+                                cx.notify();
+                            }
+                            _ => {}
+                        }
+                        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+                        if copied != this.sign_in_clipboard {
+                            this.sign_in_clipboard = copied.clone();
+                            if let Some(text) = copied
+                                && text.contains("amazon.")
+                            {
+                                this.connect_sign_in(text, cx);
+                                return matches!(this.account, Account::SigningIn(_));
+                            }
+                        }
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Connects with a redirect address, or explains why it is the wrong one
+    /// and keeps waiting.
+    fn connect_sign_in(&mut self, address: String, cx: &mut Context<Self>) {
         let Account::SigningIn(session) = &self.account else {
             return;
         };
-        let redirect = self.redirect.read(cx).value().to_string();
-        self.redirect
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        let valid_host = reqwest::Url::parse(redirect.trim())
+        let address = address.trim().to_owned();
+        let expected = format!("www.amazon.{}", session.marketplace().domain());
+        let host = reqwest::Url::parse(&address)
             .ok()
-            .is_some_and(|url| {
-                url.scheme() == "https"
-                    && url.host_str()
-                        == Some(format!("www.amazon.{}", session.marketplace().domain()).as_str())
-            });
-        if !valid_host || !LoginSession::is_redirect(&redirect) {
-            self.account = Account::Error("That URL does not contain the Audible sign-in redirect. Start sign-in again and copy the entire final URL.".into());
+            .and_then(|url| (url.scheme() == "https").then(|| url.host_str().map(str::to_owned)))
+            .flatten();
+        if !LoginSession::is_redirect(&address) {
+            self.sign_in_note = Some((
+                "That’s a different Amazon page. Copy the address of the tab that says it can’t be found.".into(),
+                true,
+            ));
+            cx.notify();
+            return;
+        }
+        if host.as_deref() != Some(expected.as_str()) {
+            self.sign_in_note = Some((
+                format!(
+                    "That sign-in is for {}, but you chose {}. Cancel and choose that store instead.",
+                    host.unwrap_or_else(|| "another Amazon site".into()),
+                    session.marketplace().display_name()
+                )
+                .into(),
+                true,
+            ));
             cx.notify();
             return;
         }
         let session = (**session).clone();
+        // The person is still in their browser; bring the app back for them.
+        cx.activate(true);
+        self.sign_in_watch += 1;
+        self.sign_in_note = None;
+        self.connecting_after_sign_in = true;
         self.account = Account::Loading;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { backend::sign_in(session, redirect) })
+                .background_spawn(async move { backend::sign_in(session, address) })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                this.connecting_after_sign_in = false;
                 this.account = match result {
                     Ok(library) => Account::Ready(library),
                     Err(error) => Account::Error(error.to_string()),

@@ -118,24 +118,43 @@ impl Shell {
         let color = cx.theme().colors.ink_secondary;
         let copy = |text: String| copy(text, color);
         let base = page_base;
+        let status = |text: &'static str| div().type_style(ui::text::BODY).text_color(color).child(ShimmerText::new(text));
         match &self.account {
+            Account::Loading if self.connecting_after_sign_in => base()
+                .child(sign_in_steps(2, cx))
+                .child(heading("Connecting to Audible"))
+                .child(copy("Signed in. Registering this Mac and loading your library. You can leave this window open.".into()))
+                .child(status("Loading your library…"))
+                .into_any_element(),
             Account::Loading => base().child(heading("Connecting to Audible"))
                 .child(loading_placeholders("Loading your library…", cx)).into_any_element(),
-            Account::SignedOut => base().child(heading("Your Audible library, here"))
-                .child(copy("Choose your Audible marketplace, then sign in with Amazon. Your device credentials are stored in your Mac’s Keychain.".into()))
+            Account::SignedOut => base()
+                .child(sign_in_steps(0, cx))
+                .child(heading("Your Audible library, here"))
+                .child(copy("Choose your Audible store, then sign in with Amazon in your browser. Your device credentials are stored in your Mac’s Keychain.".into()))
                 .child(div().flex().gap(px(12.))
-                    .child(div().w(px(220.)).child(Select::new(&self.marketplace).placeholder("Choose marketplace").accessibility_label("Audible marketplace")))
+                    .child(div().w(px(220.)).child(Select::new(&self.marketplace).placeholder("Choose store").accessibility_label("Audible store")))
                     .child(Button::new("sign-in").label("Sign in with Amazon").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.begin_sign_in(cx)))))
-                .children(self.suggested_marketplace.map(|market| copy(format!("Suggested {} from your Mac’s region. You can choose a different marketplace.", market.display_name()))))
+                .children(self.suggested_marketplace.map(|market| copy(format!("Suggested {} from your Mac’s region. Use the store you bought your books in.", market.display_name()))))
                 .children(self.download_notice.iter().map(|message| copy(message.clone())))
                 .into_any_element(),
-            Account::SigningIn(_) => base().child(heading("Finish signing in"))
-                .child(copy("Complete sign-in in your browser. When the final page says it cannot be found, copy its full address and paste it below. Treat this address as private.".into()))
-                .child(Input::new(&self.redirect))
-                .child(div().flex().gap(px(12.))
-                    .child(Button::new("finish").label("Connect account").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, window, cx| this.finish_sign_in(window, cx))))
-                    .child(Button::new("cancel").label("Cancel").on_click(cx.listener(|this, _, _, cx| { this.account = Account::SignedOut; cx.notify(); }))))
-                .into_any_element(),
+            Account::SigningIn(_) => {
+                let note = self.sign_in_note.clone().map(|(text, is_error)| {
+                    let note_color = if is_error { cx.theme().accent.text } else { color };
+                    div().flex().items_start().gap(px(8.)).max_w(px(570.))
+                        .when(is_error, |row| row.child(ui::icon(Icon::Cancel).size(px(14.)).mt(px(1.)).text_color(note_color)))
+                        .child(div().type_style(ui::text::BODY).text_color(note_color).child(text))
+                });
+                base()
+                    .child(sign_in_steps(1, cx))
+                    .child(heading("Finish signing in"))
+                    .child(copy("Sign in with Amazon in your browser. This window continues by itself when you’re done.".into()))
+                    .child(note.map_or_else(|| status("Waiting for Amazon…").into_any_element(), IntoElement::into_any_element))
+                    .child(div().flex().gap(px(12.))
+                        .child(Button::new("reopen").label("Open Amazon again").on_click(cx.listener(|this, _, _, cx| this.reopen_sign_in(cx))))
+                        .child(Button::new("cancel").label("Cancel").on_click(cx.listener(|this, _, _, cx| this.cancel_sign_in(cx)))))
+                    .into_any_element()
+            }
             Account::Error(error) => base().child(heading("Could not connect"))
                 .child(copy(error.clone()))
                 .child(div().flex().gap(px(12.))
@@ -145,4 +164,30 @@ impl Shell {
             Account::Ready(_) => div().into_any_element(),
         }
     }
+}
+
+/// Choose store → Sign in → Load library, ticking off the steps before
+/// `current`.
+fn sign_in_steps(current: usize, cx: &Context<Shell>) -> gpui_kit::Div {
+    let colors = cx.theme().colors;
+    let done_color: gpui_kit::Hsla = gpui_kit::rgb(0x3b8a4a).into();
+    let mut row = div().flex().items_center().gap(px(10.)).mb(px(6.));
+    for (index, label) in ["Choose store", "Sign in", "Load library"].into_iter().enumerate() {
+        if index > 0 {
+            let line = if index <= current { done_color } else { colors.hairline };
+            row = row.child(div().h(px(1.)).w(px(32.)).bg(line));
+        }
+        let marker = div().flex().items_center().justify_center().size(px(18.)).rounded_full();
+        let marker = if index < current {
+            marker.bg(done_color).child(ui::icon(Icon::Tick).size(px(10.)).text_color(colors.window))
+        } else {
+            let ink = if index == current { colors.ink } else { colors.ink_secondary };
+            marker.border_1().border_color(if index == current { colors.ink } else { colors.hairline })
+                .child(div().type_style(ui::text::FOOTNOTE_STRONG).text_color(ink).child((index + 1).to_string()))
+        };
+        let style = if index == current { ui::text::CAPTION_MEDIUM } else { ui::text::CAPTION };
+        let text = if index == current { colors.ink } else { colors.ink_secondary };
+        row = row.child(marker).child(div().type_style(style).text_color(text).child(label));
+    }
+    row
 }

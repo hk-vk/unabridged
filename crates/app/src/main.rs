@@ -1,5 +1,6 @@
 //! Better Audible's native application shell.
 mod backend;
+mod browser_tab;
 mod books;
 mod library;
 mod malayalam;
@@ -20,7 +21,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds, WindowOptions,
     component::{
         Root,
-        input::{Input, InputEvent, InputState},
+        input::{InputEvent, InputState},
         select::{SearchableVec, Select, SelectState},
         shimmer::ShimmerText,
         skeleton::Skeleton,
@@ -206,7 +207,14 @@ struct Shell {
     account: Account,
     marketplace: Entity<SelectState<SearchableVec<&'static str>>>,
     suggested_marketplace: Option<Marketplace>,
-    redirect: Entity<InputState>,
+    /// A note under "Finish signing in": a hint, or why an address was refused.
+    sign_in_note: Option<(gpui_kit::SharedString, bool)>,
+    /// Bumped on each sign-in attempt so an old watcher stops.
+    sign_in_watch: u64,
+    /// Clipboard text when the last check ran, so only new copies count.
+    sign_in_clipboard: Option<String>,
+    /// The library is loading right after a sign-in, not a relaunch.
+    connecting_after_sign_in: bool,
     search: Entity<InputState>,
     library_search: Entity<InputState>,
     browse_name: Option<String>,
