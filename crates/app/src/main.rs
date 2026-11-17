@@ -8,6 +8,8 @@ mod playback;
 mod player;
 mod region;
 mod shell;
+#[cfg(debug_assertions)]
+mod tour;
 mod transcript;
 mod views;
 mod windows;
@@ -336,6 +338,8 @@ fn open_main_window(cx: &mut gpui_kit::App) {
         Ok(_handle) => {
             #[cfg(debug_assertions)]
             smoke_open_mini(_handle, cx);
+            #[cfg(debug_assertions)]
+            tour::start(_handle, cx);
             if std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none() {
                 cx.activate(true);
             }
