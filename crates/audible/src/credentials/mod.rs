@@ -2,8 +2,9 @@
 //!
 //! [`Credentials`] holds everything a registered device needs. It is stored
 //! as one JSON blob per profile through a [`CredentialStore`]:
-//! [`KeychainStore`] (macOS Keychain, generic password item) in the app and
-//! [`MemoryStore`] in tests. Nothing is ever written to plain files.
+//! [`FileStore`] (private JSON files) in the app, [`KeychainStore`] (macOS
+//! Keychain, generic password item) for moving older sign-ins over, and
+//! [`MemoryStore`] in tests.
 
 mod secret;
 mod store;
@@ -16,6 +17,8 @@ use serde::{Deserialize, Serialize};
 pub use secret::Secret;
 #[cfg(target_os = "macos")]
 pub use store::KeychainStore;
+#[cfg(unix)]
+pub use store::FileStore;
 pub use store::{CredentialStore, MemoryStore};
 
 use crate::auth::DeviceSerial;

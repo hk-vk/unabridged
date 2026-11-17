@@ -137,3 +137,113 @@ impl CredentialStore for KeychainStore {
         }
     }
 }
+
+/// File store: one JSON file per profile in a directory only the user can
+/// open (0700), each file readable only by the user (0600).
+///
+/// Unlike the Keychain it never shows an access prompt, including after the
+/// app is rebuilt or updated with a self-signed identity. The trade-off: any
+/// process running as the user can read the files without asking.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+pub struct FileStore {
+    directory: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl FileStore {
+    /// A store keeping its files in `directory`, created on first save.
+    pub fn new(directory: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            directory: directory.into(),
+        }
+    }
+
+    fn path(&self, profile: &str) -> std::path::PathBuf {
+        let safe = !profile.is_empty()
+            && profile
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        let name = if safe {
+            profile.to_owned()
+        } else {
+            hex::encode(profile)
+        };
+        self.directory.join(format!("{name}.json"))
+    }
+}
+
+#[cfg(unix)]
+fn file_error(action: &str, error: std::io::Error) -> Error {
+    Error::CredentialStore(format!("Credential file {action} failed: {error}"))
+}
+
+#[cfg(unix)]
+impl CredentialStore for FileStore {
+    fn load(&self, profile: &str) -> Result<Option<Credentials>> {
+        match std::fs::read(self.path(profile)) {
+            Ok(bytes) => decode(&zeroize::Zeroizing::new(bytes)).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(file_error("read", e)),
+        }
+    }
+
+    fn save(&self, profile: &str, credentials: &Credentials) -> Result<()> {
+        use std::io::Write as _;
+        use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
+
+        let bytes = zeroize::Zeroizing::new(encode(credentials)?);
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.directory)
+            .map_err(|e| file_error("folder", e))?;
+        std::fs::set_permissions(&self.directory, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| file_error("folder", e))?;
+        // Write a private temporary file, then rename it over the old one, so
+        // a crash never leaves half a file.
+        let path = self.path(profile);
+        let temporary = path.with_extension("json.tmp");
+        let _ = std::fs::remove_file(&temporary);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|e| file_error("write", e))?;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|e| file_error("write", e))?;
+        std::fs::rename(&temporary, &path).map_err(|e| file_error("write", e))
+    }
+
+    fn delete(&self, profile: &str) -> Result<()> {
+        match std::fs::remove_file(self.path(profile)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(file_error("delete", e)),
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod file_store_tests {
+    use super::*;
+
+    #[test]
+    fn missing_profile_loads_none_and_deletes_quietly() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::new(dir.path().join("credentials"));
+        assert!(store.load("default").unwrap().is_none());
+        store.delete("default").unwrap();
+    }
+
+    #[test]
+    fn unsafe_profile_names_stay_inside_the_folder() {
+        let store = FileStore::new("/x/credentials");
+        assert_eq!(
+            store.path("../evil"),
+            std::path::Path::new("/x/credentials").join(format!("{}.json", hex::encode("../evil")))
+        );
+    }
+}

@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 const PROFILE: &str = "default";
 
-// Keep Keychain access to the beginning of a session and to real credential
-// changes. Each Keychain read or write can show a macOS access prompt, so:
+// Keep credential storage access to the beginning of a session and to real
+// credential changes. Reads from older Keychain sign-ins can show a macOS
+// access prompt, so:
 // * a successful read is cached for the session;
 // * a failed or cancelled read is remembered too, so background work (progress
 //   sync, chapters) does not ask again; an explicit restore clears it;
@@ -117,11 +118,59 @@ fn session() -> &'static Arc<SessionStore> {
     static STORE: std::sync::OnceLock<Arc<SessionStore>> = std::sync::OnceLock::new();
     STORE.get_or_init(|| {
         #[cfg(target_os = "macos")]
-        let inner: Arc<dyn CredentialStore> = Arc::new(audible::credentials::KeychainStore::new());
+        let inner: Arc<dyn CredentialStore> = Arc::new(MovedFromKeychain {
+            file: audible::credentials::FileStore::new(credentials_directory()),
+            keychain: audible::credentials::KeychainStore::new(),
+        });
         #[cfg(not(target_os = "macos"))]
         let inner: Arc<dyn CredentialStore> = Arc::new(Unsupported);
         Arc::new(SessionStore::new(inner))
     })
+}
+
+/// Where the sign-in is kept: private files, not the Keychain. The app is
+/// signed with a self-signed identity, which macOS does not trust, so the
+/// Keychain asked for access again after every rebuild and update.
+#[cfg(target_os = "macos")]
+fn credentials_directory() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home).join("Library/Application Support/Better Audible/Credentials")
+}
+
+/// The file store, which moves a sign-in saved by older versions out of the
+/// Keychain the first time it is read (one last access prompt).
+#[cfg(target_os = "macos")]
+struct MovedFromKeychain {
+    file: audible::credentials::FileStore,
+    keychain: audible::credentials::KeychainStore,
+}
+
+#[cfg(target_os = "macos")]
+impl CredentialStore for MovedFromKeychain {
+    fn load(&self, profile: &str) -> audible::Result<Option<audible::credentials::Credentials>> {
+        if let Some(credentials) = self.file.load(profile)? {
+            return Ok(Some(credentials));
+        }
+        let Some(credentials) = self.keychain.load(profile)? else {
+            return Ok(None);
+        };
+        self.file.save(profile, &credentials)?;
+        let _ = self.keychain.delete(profile);
+        Ok(Some(credentials))
+    }
+
+    fn save(
+        &self,
+        profile: &str,
+        credentials: &audible::credentials::Credentials,
+    ) -> audible::Result<()> {
+        self.file.save(profile, credentials)
+    }
+
+    fn delete(&self, profile: &str) -> audible::Result<()> {
+        self.file.delete(profile)?;
+        self.keychain.delete(profile)
+    }
 }
 
 fn store() -> anyhow::Result<Arc<dyn CredentialStore>> {

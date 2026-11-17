@@ -581,7 +581,7 @@ mod tests {
         }
     }
 
-    async fn signed_in(server: &MockServer, store: Arc<MemoryStore>) -> Audible {
+    async fn signed_in(server: &MockServer, store: Arc<dyn CredentialStore>) -> Audible {
         let key = fixture("test_rsa_key.pem");
         let body = fixture("register_response.json")
             .replace("PRIVATE_KEY_PLACEHOLDER", &key.replace('\n', "\\n"));
@@ -620,6 +620,28 @@ mod tests {
             .unwrap();
         assert_eq!(restored.credentials().await, client.credentials().await);
         assert!(Audible::from_store(store, "other").unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sign_in_persists_to_a_private_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Credentials");
+        let store = Arc::new(crate::credentials::FileStore::new(&folder));
+        let client = signed_in(&server, store.clone()).await;
+        let restored = Audible::from_store(store.clone(), "default")
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.credentials().await, client.credentials().await);
+        let mode = |path: &std::path::Path| {
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+        };
+        assert_eq!(mode(&folder), 0o700);
+        assert_eq!(mode(&folder.join("default.json")), 0o600);
+        store.delete("default").unwrap();
+        assert!(Audible::from_store(store, "default").unwrap().is_none());
     }
 
     #[tokio::test]
