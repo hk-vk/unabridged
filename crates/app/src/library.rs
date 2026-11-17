@@ -141,7 +141,7 @@ impl Shell {
             .into_iter()
             .find(|m| Some(m.display_name()) == selected)
         else {
-            self.download_notice = Some("Choose your Audible marketplace to continue.".into());
+            self.download_notice = Some("Choose your Audible store to continue.".into());
             cx.notify();
             return;
         };

@@ -199,7 +199,7 @@ impl Shell {
                 )
                 .child(
                     Button::new("settings-change-store")
-                        .label("Change store")
+                        .label("Sign out")
                         .icon(Icon::Logout)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.confirm_sign_out = true;
@@ -225,7 +225,7 @@ impl Shell {
             });
         let caption = if self.confirm_sign_out {
             format!(
-                "Sign out of Audible {marketplace} to choose another store? Downloads stay on this Mac."
+                "Sign out of Audible {marketplace}? You can sign in again with any store. Downloads stay on this Mac."
             )
         } else {
             status.to_string()

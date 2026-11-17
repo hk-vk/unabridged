@@ -105,8 +105,12 @@ impl RenderOnce for SidebarItem {
             )
             .children(self.trailing)
             .when_some(self.on_click, |el, handler| {
+                // The selected row already has its tint; other rows show the
+                // window fill under the pointer so the hover is visible.
+                let selected = self.selected;
+                let fill = theme.colors.fill;
                 el.cursor_pointer()
-                    .hover(|style| style.opacity(0.86))
+                    .hover(move |style| if selected { style.opacity(0.86) } else { style.bg(fill) })
                     .on_click(move |e, w, cx| handler(e, w, cx))
             })
     }

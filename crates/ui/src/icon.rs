@@ -124,6 +124,9 @@ icons! {
     External => "external",
     /// Disclosure (`arrow-right-01`).
     ChevronRight => "chevron-right",
+    /// Pop-up menus such as the store picker (`arrow-down-01`). gpui-kit's
+    /// select also draws `icons/chevron-down.svg`.
+    ChevronDown => "chevron-down",
     /// Previous chapter (`previous`).
     Previous => "previous",
     /// Next chapter (`next`).

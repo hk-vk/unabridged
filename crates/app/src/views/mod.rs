@@ -119,44 +119,54 @@ impl Shell {
         let copy = |text: String| copy(text, color);
         let base = page_base;
         let status = |text: &'static str| div().type_style(ui::text::BODY).text_color(color).child(ShimmerText::new(text));
+        // A heading and its explanation read as one group; the gap to the
+        // controls below is the page gap (18px), more than twice this one.
+        let intro = |title: &'static str, text: &'static str| {
+            div().flex().flex_col().gap(px(8.)).child(heading(title)).child(copy(text.into()))
+        };
         match &self.account {
             Account::Loading if self.connecting_after_sign_in => base()
                 .child(sign_in_steps(2, cx))
-                .child(heading("Connecting to Audible"))
-                .child(copy("Signed in. Registering this Mac and loading your library. You can leave this window open.".into()))
+                .child(intro("Connecting to Audible", "You’re signed in. Registering this Mac and loading your library; you can leave this window open."))
                 .child(status("Loading your library…"))
                 .into_any_element(),
             Account::Loading => base().child(heading("Connecting to Audible"))
                 .child(loading_placeholders("Loading your library…", cx)).into_any_element(),
             Account::SignedOut => base()
                 .child(sign_in_steps(0, cx))
-                .child(heading("Your Audible library, here"))
-                .child(copy("Choose your Audible store, then sign in with Amazon in your browser. Your device credentials are stored in your Mac’s Keychain.".into()))
-                .child(div().flex().gap(px(12.))
-                    .child(div().w(px(220.)).child(Select::new(&self.marketplace).placeholder("Choose store").accessibility_label("Audible store")))
-                    .child(Button::new("sign-in").label("Sign in with Amazon").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.begin_sign_in(cx)))))
-                .children(self.suggested_marketplace.map(|market| copy(format!("Suggested {} from your Mac’s region. Use the store you bought your books in.", market.display_name()))))
-                .children(self.download_notice.iter().map(|message| copy(message.clone())))
+                .child(intro("Your Audible library, here", "Choose your Audible store, then sign in with Amazon in your browser. Your device credentials are stored in your Mac’s Keychain."))
+                .child(div().flex().flex_col().gap(px(8.))
+                    .child(div().flex().items_center().gap(px(12.))
+                        .child(div().w(px(220.)).child(
+                            Select::new(&self.marketplace)
+                                .placeholder("Choose store")
+                                .accessibility_label("Audible store")
+                                .h(px(ui::metrics::size::BUTTON))
+                                .rounded(px(ui::metrics::radius::BUTTON))
+                                .type_style(ui::text::BODY),
+                        ))
+                        .child(Button::new("sign-in").label("Sign in with Amazon").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.begin_sign_in(cx)))))
+                    .children(self.suggested_marketplace.map(|market| div().type_style(ui::text::CAPTION).text_color(color).child(format!("Suggested from your Mac’s region: {}. Choose the store where you bought your books.", market.display_name()))))
+                    .children(self.download_notice.iter().map(|message| div().type_style(ui::text::CAPTION).text_color(color).child(message.clone()))))
                 .into_any_element(),
             Account::SigningIn(_) => {
                 let note = self.sign_in_note.clone().map(|(text, is_error)| {
                     let note_color = if is_error { cx.theme().accent.text } else { color };
                     div().flex().items_start().gap(px(8.)).max_w(px(570.))
-                        .when(is_error, |row| row.child(ui::icon(Icon::Cancel).size(px(14.)).mt(px(1.)).text_color(note_color)))
+                        .when(is_error, |row| row.child(ui::icon(Icon::Cancel).flex_none().size(px(14.)).mt(px(1.)).text_color(note_color)))
                         .child(div().type_style(ui::text::BODY).text_color(note_color).child(text))
                 });
                 base()
                     .child(sign_in_steps(1, cx))
-                    .child(heading("Finish signing in"))
-                    .child(copy("Sign in with Amazon in your browser. This window continues by itself when you’re done.".into()))
+                    .child(intro("Finish signing in", "Sign in with Amazon in your browser. This window continues by itself when you’re done."))
                     .child(note.map_or_else(|| status("Waiting for Amazon…").into_any_element(), IntoElement::into_any_element))
                     .child(div().flex().gap(px(12.))
                         .child(Button::new("reopen").label("Open Amazon again").on_click(cx.listener(|this, _, _, cx| this.reopen_sign_in(cx))))
                         .child(Button::new("cancel").label("Cancel").on_click(cx.listener(|this, _, _, cx| this.cancel_sign_in(cx)))))
                     .into_any_element()
             }
-            Account::Error(error) => base().child(heading("Could not connect"))
-                .child(copy(error.clone()))
+            Account::Error(error) => base()
+                .child(div().flex().flex_col().gap(px(8.)).child(heading("Could not connect")).child(copy(error.clone())))
                 .child(div().flex().gap(px(12.))
                     .child(Button::new("retry").label("Try loading again").on_click(cx.listener(|this, _, _, cx| this.restore(cx))))
                     .child(Button::new("restart").label("Sign in again").on_click(cx.listener(|this, _, _, cx| { this.account = Account::SignedOut; cx.notify(); }))))
