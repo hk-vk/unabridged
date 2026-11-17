@@ -27,6 +27,50 @@ pub(crate) fn strip_html(html: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A publisher summary as plain paragraphs: block tags (`p`, `br`, `div`,
+/// `li`) start a new paragraph, and divider lines such as `________` are
+/// dropped.
+pub(crate) fn blurb_paragraphs(html: &str) -> Vec<String> {
+    let mut text = String::with_capacity(html.len());
+    let mut tag: Option<String> = None;
+    for ch in html.chars() {
+        match (&mut tag, ch) {
+            (None, '<') => tag = Some(String::new()),
+            (Some(name), '>') => {
+                let name = name
+                    .trim_start_matches('/')
+                    .split(|c: char| c.is_whitespace() || c == '/')
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let block = matches!(name.as_str(), "p" | "br" | "div" | "li" | "ul" | "ol");
+                text.push(if block { '\n' } else { ' ' });
+                tag = None;
+            }
+            (Some(name), _) => name.push(ch),
+            (None, _) => text.push(ch),
+        }
+    }
+    let text = text
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">");
+    text.split('\n')
+        .flat_map(|line| line.split("___"))
+        .map(|part| {
+            part.split_whitespace()
+                .filter(|word| !word.chars().all(|c| c == '_'))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|part| part.chars().any(char::is_alphanumeric))
+        .collect()
+}
+
 pub(crate) fn download_display(
     event: audible::DownloadEvent,
 ) -> (&'static str, String, Option<f32>) {
@@ -200,5 +244,28 @@ impl Timeline {
     /// The chapter's name, if the span is a chapter.
     pub(crate) fn chapter_name(&self) -> Option<&str> {
         self.chapter.as_ref().map(|(_, name)| name.as_str())
+    }
+}
+
+#[cfg(test)]
+mod blurb_tests {
+    use super::blurb_paragraphs;
+
+    #[test]
+    fn splits_paragraphs_and_drops_dividers() {
+        let html = "<p>'A guide.' Charles Duhigg</p><p>'Refreshing.' Ali Abdaal</p>\
+                    <p>________</p><p>Extraordinary results &amp; agency.</p>";
+        assert_eq!(
+            blurb_paragraphs(html),
+            ["'A guide.' Charles Duhigg", "'Refreshing.' Ali Abdaal", "Extraordinary results & agency."]
+        );
+    }
+
+    #[test]
+    fn splits_an_inline_divider() {
+        assert_eq!(
+            blurb_paragraphs("Praise here ________ Extraordinary results"),
+            ["Praise here", "Extraordinary results"]
+        );
     }
 }

@@ -340,24 +340,6 @@ impl Shell {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
-        let (account_label, status, online) = match &self.account {
-            Account::Ready(library) => (
-                format!("Audible {}", library.marketplace),
-                if library.offline {
-                    "Offline"
-                } else {
-                    "Connected"
-                },
-                !library.offline,
-            ),
-            Account::Loading => ("Audible".into(), "Connecting…", false),
-            _ => ("Audible".into(), "Not signed in", false),
-        };
-        let status_color = if online {
-            gpui_kit::rgb(0x34c759).into()
-        } else {
-            theme.colors.ink_secondary
-        };
         div()
             .w(px(220.))
             .h_full()
@@ -383,30 +365,7 @@ impl Shell {
             .child(self.nav("Finished", Icon::CheckmarkCircle, Page::Finished, cx))
             .child(div().flex_1())
             .child(self.nav("Settings", Icon::Settings, Page::Settings, cx))
-            .child(
-                div().mb(px(18.)).child(
-                    SidebarItem::new("sidebar-account", Icon::UserCircle, account_label)
-                        .trailing(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .when(!online, |el| {
-                                    el.child(
-                                        div()
-                                            .type_style(ui::text::FOOTNOTE)
-                                            .text_color(theme.colors.ink_secondary)
-                                            .child(status),
-                                    )
-                                })
-                                .child(div().size(px(7.)).rounded_full().bg(status_color)),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.page = Page::Settings;
-                            cx.notify();
-                        })),
-                ),
-            )
+            .child(div().h(px(18.)))
             .into_any_element()
     }
 }

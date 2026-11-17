@@ -37,8 +37,8 @@ impl Shell {
             .merchandising_summary
             .as_deref()
             .or(product.publisher_summary.as_deref())
-            .map(strip_html)
-            .filter(|text| !text.is_empty());
+            .map(blurb_paragraphs)
+            .filter(|paragraphs| !paragraphs.is_empty());
         let mut facts: Vec<(&'static str, String)> = Vec::new();
         if let Some(minutes) = product.runtime_length_min {
             facts.push((
@@ -52,6 +52,10 @@ impl Shell {
             facts.push(("Series", series));
         }
         if let Some(date) = product.release_date.clone() {
+            // Audible sends ISO dates; show them the way people say them.
+            let date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+                .map(|d| d.format("%-d %B %Y").to_string())
+                .unwrap_or(date);
             facts.push(("Released", date));
         }
         if let Some(publisher) = product.publisher_name.clone() {
@@ -90,8 +94,9 @@ impl Shell {
                             .flex_col()
                             .child(div().type_style(ui::text::BOOK_DISPLAY).child(title))
                             .children(product.subtitle.clone().map(|subtitle| {
+                                // The display title's descenders need room.
                                 div()
-                                    .mt(px(6.))
+                                    .mt(px(12.))
                                     .type_style(ui::text::LEAD)
                                     .text_color(muted)
                                     .child(subtitle)
@@ -117,13 +122,16 @@ impl Shell {
                     .flex()
                     .items_start()
                     .gap(px(48.))
-                    .children(blurb.map(|blurb| {
+                    .children(blurb.map(|paragraphs| {
                         div()
                             .flex_1()
                             .min_w_0()
                             .max_w(px(620.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
                             .type_style(ui::text::BLURB)
-                            .child(blurb)
+                            .children(paragraphs.into_iter().map(|paragraph| div().child(paragraph)))
                     }))
                     .when(!facts.is_empty(), |el: gpui_kit::Div| {
                         el.child(div().w(px(240.)).flex_none().flex().flex_col().children(
@@ -214,7 +222,6 @@ impl Shell {
         library: &backend::Library,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
-        let theme_fill = cx.theme().colors.fill;
         let base = page_base;
         let Some(item) = self
             .selected_book
@@ -250,10 +257,9 @@ impl Shell {
             .gap(px(10.))
             .child(self.resume_action("book", &library.account_key, item, true, cx))
             .children(local_path.map(|path| {
-                IconButton::new("book-reveal", Icon::Folder, 16.)
-                    .hit_area(36.)
-                    .hover_fill(theme_fill)
-                    .tooltip("Show in Finder")
+                Button::new("book-reveal")
+                    .label("Show in Finder")
+                    .icon(Icon::Folder)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Err(error) = std::process::Command::new("open")
                             .arg("-R")
