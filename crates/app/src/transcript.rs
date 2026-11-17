@@ -22,7 +22,7 @@ pub struct Line {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Phase {
     Checking,
-    /// The speech model for this language must be downloaded first.
+    /// macOS must add this language's speech files first.
     NeedsModel,
     Downloading(f32),
     Transcribing,
@@ -144,6 +144,47 @@ pub fn locale_for(language: Option<&str>, marketplace: &str) -> Result<&'static 
         }
     };
     Ok(locale)
+}
+
+/// The name of a speech language from [`locale_for`], as shown when macOS
+/// needs to add it: "English (US)", "Malayalam".
+pub fn speech_name(locale: &str) -> &'static str {
+    match locale {
+        "en-US" => "English (US)",
+        "en-GB" => "English (UK)",
+        "en-AU" => "English (Australia)",
+        "en-CA" => "English (Canada)",
+        "en-IN" => "English (India)",
+        "fr-FR" => "French",
+        "fr-CA" => "French (Canada)",
+        "es-ES" => "Spanish (Spain)",
+        "es-US" => "Spanish (US)",
+        "es-MX" => "Spanish (Mexico)",
+        "pt-BR" => "Portuguese (Brazil)",
+        "pt-PT" => "Portuguese (Portugal)",
+        "de-DE" => "German",
+        "it-IT" => "Italian",
+        "ja-JP" => "Japanese",
+        "ko-KR" => "Korean",
+        "zh-CN" => "Chinese (Simplified)",
+        "zh-TW" => "Chinese (Traditional)",
+        "yue-CN" => "Cantonese",
+        "hi-IN" => "Hindi",
+        "bn-IN" => "Bengali",
+        "gu-IN" => "Gujarati",
+        "kn-IN" => "Kannada",
+        "ks-IN" => "Kashmiri",
+        "mai-IN" => "Maithili",
+        "ml-IN" => "Malayalam",
+        "mr-IN" => "Marathi",
+        "ne-IN" => "Nepali",
+        "or-IN" => "Odia",
+        "pa-IN" => "Punjabi",
+        "ta-IN" => "Tamil",
+        "te-IN" => "Telugu",
+        "ur-IN" => "Urdu",
+        _ => "this language",
+    }
 }
 
 /// "mandarin_chinese" → "Mandarin Chinese".

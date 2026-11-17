@@ -512,6 +512,7 @@ pub(crate) fn read_along_list(
         }
         transcript::Phase::NeedsModel => {
             let entity = entity.clone();
+            let language = transcript::speech_name(read.locale);
             return div()
                 .flex()
                 .flex_col()
@@ -520,14 +521,14 @@ pub(crate) fn read_along_list(
                     div()
                         .type_style(ui::text::BODY)
                         .text_color(palette.on_field_muted)
-                        .child(
-                            "Read along transcribes each chapter on your Mac with Apple’s speech model. Nothing leaves your Mac. The model is a one-time download.",
-                        ),
+                        .child(format!(
+                            "Read along uses your Mac’s built-in speech recognition. macOS needs to add {language} speech first. It’s a one-time download that macOS keeps. Nothing leaves your Mac."
+                        )),
                 )
                 .child(
                     div().flex().child(
                         Chip::new("download-speech-model")
-                            .label("Download speech model")
+                            .label(format!("Add {language} speech"))
                             .icon(Icon::Download, palette.on_field)
                             .height(ui::metrics::size::POPUP)
                             .style(ChipStyle::Outline {
@@ -551,7 +552,11 @@ pub(crate) fn read_along_list(
                     div()
                         .type_style(ui::text::CAPTION.tabular())
                         .text_color(palette.on_field_muted)
-                        .child(format!("Downloading speech model… {:.0}%", progress * 100.)),
+                        .child(format!(
+                            "Adding {} speech… {:.0}%",
+                            transcript::speech_name(read.locale),
+                            progress * 100.
+                        )),
                 )
                 .child(
                     SegmentedProgress::new(0., *progress, 0.)

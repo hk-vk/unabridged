@@ -76,7 +76,7 @@ func install(_ identifier: String) async {
         }
         emit(["done": true])
     } catch {
-        fail("Could not download the speech model: \(error.localizedDescription)")
+        fail("macOS could not add speech for this language: \(error.localizedDescription)")
     }
 }
 
@@ -96,7 +96,7 @@ func transcribe(path: String, start: Double, end: Double, identifier: String) as
     guard let locale = await resolve(identifier) else { fail("This language is not supported.") }
     let module = transcriber(for: locale)
     guard await AssetInventory.status(forModules: [module]) == .installed else {
-        fail("The speech model is not installed.")
+        fail("macOS has not added speech for this language yet.")
     }
     let file: AVAudioFile
     do {
