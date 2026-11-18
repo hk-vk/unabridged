@@ -88,6 +88,14 @@ impl TypeStyle {
         }
     }
 
+    /// The same style at `factor` times the size; leading stays proportional.
+    pub fn scaled(self, factor: f32) -> Self {
+        Self {
+            size: self.size * factor,
+            ..self
+        }
+    }
+
     /// Tabular figures, for times and counters that update in place.
     pub const fn tabular(self) -> Self {
         Self {

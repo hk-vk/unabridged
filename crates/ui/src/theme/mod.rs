@@ -80,6 +80,30 @@ pub struct ThemeSettings {
     pub tint_with_cover: bool,
     /// Which app icon the Dock shows: light, dark or following the system.
     pub app_icon: Mode,
+    /// Read along text size, an index into [`READ_ALONG_SCALES`].
+    pub read_along_step: u8,
+}
+
+/// Read along text sizes, as multiples of the design size.
+pub const READ_ALONG_SCALES: [f32; 5] = [0.85, 1.0, 1.15, 1.3, 1.5];
+
+/// The step [`READ_ALONG_SCALES`] starts on: the design size.
+pub const READ_ALONG_DEFAULT_STEP: u8 = 1;
+
+impl ThemeSettings {
+    /// The read along text size as a multiple of the design size.
+    pub fn read_along_scale(&self) -> f32 {
+        READ_ALONG_SCALES[usize::from(self.read_along_step).min(READ_ALONG_SCALES.len() - 1)]
+    }
+
+    /// These settings with the read along text `delta` steps larger, clamped.
+    pub fn with_read_along_step(self, delta: i8) -> Self {
+        let last = (READ_ALONG_SCALES.len() - 1) as i8;
+        Self {
+            read_along_step: (self.read_along_step as i8 + delta).clamp(0, last) as u8,
+            ..self
+        }
+    }
 }
 
 impl Default for ThemeSettings {
@@ -89,6 +113,7 @@ impl Default for ThemeSettings {
             accent: AccentTheme::Ember,
             tint_with_cover: true,
             app_icon: Mode::Automatic,
+            read_along_step: READ_ALONG_DEFAULT_STEP,
         }
     }
 }

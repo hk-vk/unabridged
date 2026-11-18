@@ -340,6 +340,15 @@ impl ActivePlayer {
 
 impl Shell {
     /// Keeps the read-along transcript on the chapter that is playing.
+    /// Drops a failed transcript so the next tick transcribes it again.
+    pub(crate) fn retry_read_along(&mut self, cx: &mut Context<Self>) {
+        self.read_along = None;
+        self.read_along_follow.reset();
+        self.mini_follow.reset();
+        self.ensure_read_along(cx);
+        cx.notify();
+    }
+
     pub(crate) fn ensure_read_along(&mut self, _cx: &mut Context<Self>) {
         let Some(active) = &self.player else {
             return;

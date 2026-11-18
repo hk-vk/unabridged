@@ -127,11 +127,19 @@ impl SleepTimer {
         }
     }
 
-    /// Text for the sleep chip: "Sleep" when off, otherwise the countdown.
+    /// Short text for the sleep chip, so it fits beside speed and read
+    /// along: "Sleep", "25 min" or "Chapter end". The menu has the full text.
     fn chip_label(&self, now: std::time::Instant) -> String {
         match self {
             Self::Off => "Sleep".into(),
-            _ => self.label(now),
+            Self::Deadline(deadline) => format!(
+                "{} min",
+                deadline
+                    .saturating_duration_since(now)
+                    .as_secs()
+                    .div_ceil(60)
+            ),
+            Self::EndOfChapter { .. } => "Chapter end".into(),
         }
     }
 }
@@ -306,7 +314,11 @@ gpui_kit::actions!(
     better_audible,
     [
         /// Focuses the toolbar search field (⌘F).
-        FocusSearch
+        FocusSearch,
+        /// Larger read along text (⌘+).
+        ReadAlongLarger,
+        /// Smaller read along text (⌘−).
+        ReadAlongSmaller
     ]
 );
 
@@ -384,7 +396,12 @@ fn main() {
     app.on_reopen(reopen);
     app.run(|cx| {
         gpui_kit::init(cx);
-        cx.bind_keys([gpui_kit::KeyBinding::new("cmd-f", FocusSearch, None)]);
+        cx.bind_keys([
+            gpui_kit::KeyBinding::new("cmd-f", FocusSearch, None),
+            gpui_kit::KeyBinding::new("cmd-=", ReadAlongLarger, None),
+            gpui_kit::KeyBinding::new("cmd-+", ReadAlongLarger, None),
+            gpui_kit::KeyBinding::new("cmd--", ReadAlongSmaller, None),
+        ]);
         if let Err(error) = ui::init(backend::load_appearance(), cx) {
             eprintln!("Could not initialize the interface: {error:#}");
             cx.quit();

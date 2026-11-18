@@ -411,6 +411,12 @@ impl Render for Shell {
         div()
             .size_full()
             .flex()
+            .on_action(
+                cx.listener(|this, _: &ReadAlongLarger, _, cx| this.step_read_along_size(1, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ReadAlongSmaller, _, cx| this.step_read_along_size(-1, cx)),
+            )
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 let input = if matches!(this.page, Page::Explore | Page::CatalogBook) {
                     &this.search

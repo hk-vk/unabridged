@@ -3,7 +3,7 @@ use super::*;
 use ui::components::Switch;
 
 impl Shell {
-    fn apply_appearance(&mut self, settings: ui::ThemeSettings, cx: &mut Context<Self>) {
+    pub(crate) fn apply_appearance(&mut self, settings: ui::ThemeSettings, cx: &mut Context<Self>) {
         ui::Theme::apply_settings(settings, cx);
         crate::sync_app_icon(cx.window_appearance(), cx);
         let version = backend::register_appearance_write();

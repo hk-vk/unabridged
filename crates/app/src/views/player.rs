@@ -92,274 +92,284 @@ impl Shell {
             let (stage, detail, _) = download_display(event);
             format!("{stage}: {} · {detail}", download.title)
         });
-        let stage =
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .font_family(ui::typography::family::UI)
-                .bg(linear_gradient(
-                    180.,
-                    linear_color_stop(palette.field, 0.),
-                    linear_color_stop(palette.field_deep, 1.),
-                ))
-                .text_color(palette.on_field)
-                .child(
-                    div()
-                        .relative()
-                        .h(px(52.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .pl(px(84.))
-                        .pr(px(20.))
-                        .gap(px(10.))
-                        .children(timeline.chapter.as_ref().map(|(index, name)| {
-                            let total = active.chapters.len();
-                            // The name truncates; "21 of 30" never does.
-                            let trigger = div()
-                                .id("current-chapter")
-                                .min_w_0()
-                                .h(px(ui::metrics::size::POPUP))
-                                .px(px(10.))
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .rounded(px(ui::metrics::radius::POPUP))
-                                .bg(palette.on_field_track)
-                                .cursor_pointer()
-                                .hover(|style| style.opacity(0.86))
-                                .type_style(ui::text::BODY_MEDIUM)
-                                .text_color(palette.on_field)
-                                .child(
-                                    ui::icon(Icon::Chapters)
-                                        .flex_none()
-                                        .size(px(ui::metrics::icon::MEDIUM))
-                                        .text_color(palette.on_field_muted),
-                                )
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .child(chapter_name(name).to_string()),
-                                )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(palette.on_field_muted)
-                                        .child(format!("{} of {total}", index + 1)),
-                                );
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .top_0()
-                                .h_full()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .max_w(px(if compact { 260. } else { 420. }))
-                                        .flex()
-                                        .child(self.chapter_picker(
-                                            "current-chapter-menu",
-                                            gpui_kit::Anchor::TopCenter,
-                                            menus::PickerColors::field(&palette),
-                                            trigger,
-                                            cx,
-                                        )),
-                                )
-                        }))
-                        .child(
-                            BackLink::new("player-back", self.back_label())
-                                .color(palette.on_field_muted)
-                                .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
-                        )
-                        .child(div().flex_1().min_w_0())
-                        .child(
-                            IconButton::new("open-mini", Icon::Pip, 17.)
-                                .hit_area(28.)
-                                .color(palette.on_field_muted)
-                                .hover_fill(palette.on_field_track)
-                                .tooltip("Open mini player")
-                                .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
-                        ),
-                )
-                .children(self.download_notice.as_ref().map(|message| {
-                    div()
-                        .mx(px(if compact { 24. } else { 56. }))
-                        .mt(px(8.))
-                        .px(px(14.))
-                        .py(px(9.))
-                        .rounded(px(8.))
-                        .bg(palette.on_field_track)
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .type_style(ui::text::CAPTION)
-                                .text_color(palette.on_field)
-                                .child(message.clone()),
-                        )
-                        .child(
-                            IconButton::new("dismiss-player-status", Icon::Cancel, 14.)
-                                .hit_area(24.)
-                                .color(palette.on_field_muted)
-                                .hover_fill(palette.on_field_track)
-                                .tooltip("Dismiss")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.download_notice = None;
-                                    cx.notify();
-                                })),
-                        )
-                }))
-                .children(downloading.map(|message| {
-                    div()
-                        .mx(px(if compact { 24. } else { 56. }))
-                        .mt(px(8.))
-                        .type_style(ui::text::CAPTION)
-                        .text_color(palette.on_field_muted)
-                        .child(message)
-                }))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .px(px(gutter))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .child(if self.read_along_open {
-                            // Cover, title and credits on the left; the transcript
-                            // fills the right, top-aligned with the cover.
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .w_full()
-                                .max_w(px(measure))
-                                .pt(px(28.))
-                                .flex()
-                                .gap(px(content_gap))
-                                .child(
-                                    div()
-                                        .w(px(cover_size))
-                                        .flex_none()
-                                        .flex()
-                                        .flex_col()
-                                        .child(cover(cover_size))
-                                        .child(
-                                            div()
-                                                .mt(px(24.))
-                                                .type_style(ui::text::BOOK_TITLE)
-                                                .child(title.clone()),
+        let stage = div()
+            .size_full()
+            // Now Playing renders outside the window frame, so it handles
+            // the text size shortcuts itself.
+            .on_action(
+                cx.listener(|this, _: &ReadAlongLarger, _, cx| this.step_read_along_size(1, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ReadAlongSmaller, _, cx| this.step_read_along_size(-1, cx)),
+            )
+            .flex()
+            .flex_col()
+            .font_family(ui::typography::family::UI)
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(palette.field, 0.),
+                linear_color_stop(palette.field_deep, 1.),
+            ))
+            .text_color(palette.on_field)
+            .child(
+                div()
+                    .relative()
+                    .h(px(52.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .pl(px(84.))
+                    .pr(px(20.))
+                    .gap(px(10.))
+                    .children(timeline.chapter.as_ref().map(|(index, name)| {
+                        let total = active.chapters.len();
+                        // The name truncates; "21 of 30" never does.
+                        let trigger = div()
+                            .id("current-chapter")
+                            .min_w_0()
+                            .h(px(ui::metrics::size::POPUP))
+                            .px(px(10.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .rounded(px(ui::metrics::radius::POPUP))
+                            .bg(palette.on_field_track)
+                            .cursor_pointer()
+                            .hover(|style| style.opacity(0.86))
+                            .type_style(ui::text::BODY_MEDIUM)
+                            .text_color(palette.on_field)
+                            .child(
+                                ui::icon(Icon::Chapters)
+                                    .flex_none()
+                                    .size(px(ui::metrics::icon::MEDIUM))
+                                    .text_color(palette.on_field_muted),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(chapter_name(name).to_string()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_color(palette.on_field_muted)
+                                    .child(format!("{} of {total}", index + 1)),
+                            );
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top_0()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .max_w(px(if compact { 260. } else { 420. }))
+                                    .flex()
+                                    .child(self.chapter_picker(
+                                        "current-chapter-menu",
+                                        gpui_kit::Anchor::TopCenter,
+                                        menus::PickerColors::field(&palette),
+                                        trigger,
+                                        cx,
+                                    )),
+                            )
+                    }))
+                    .child(
+                        BackLink::new("player-back", self.back_label())
+                            .color(palette.on_field_muted)
+                            .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                    )
+                    .child(div().flex_1().min_w_0())
+                    .child(
+                        IconButton::new("open-mini", Icon::Pip, 17.)
+                            .hit_area(28.)
+                            .color(palette.on_field_muted)
+                            .hover_fill(palette.on_field_track)
+                            .tooltip("Open mini player")
+                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
+                    ),
+            )
+            .children(self.download_notice.as_ref().map(|message| {
+                div()
+                    .mx(px(if compact { 24. } else { 56. }))
+                    .mt(px(8.))
+                    .px(px(14.))
+                    .py(px(9.))
+                    .rounded(px(8.))
+                    .bg(palette.on_field_track)
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .type_style(ui::text::CAPTION)
+                            .text_color(palette.on_field)
+                            .child(message.clone()),
+                    )
+                    .child(
+                        IconButton::new("dismiss-player-status", Icon::Cancel, 14.)
+                            .hit_area(24.)
+                            .color(palette.on_field_muted)
+                            .hover_fill(palette.on_field_track)
+                            .tooltip("Dismiss")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.download_notice = None;
+                                cx.notify();
+                            })),
+                    )
+            }))
+            .children(downloading.map(|message| {
+                div()
+                    .mx(px(if compact { 24. } else { 56. }))
+                    .mt(px(8.))
+                    .type_style(ui::text::CAPTION)
+                    .text_color(palette.on_field_muted)
+                    .child(message)
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(gutter))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(if self.read_along_open {
+                        // Cover, title and credits on the left; the transcript
+                        // fills the right, top-aligned with the cover.
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .w_full()
+                            .max_w(px(measure))
+                            .pt(px(28.))
+                            .flex()
+                            .gap(px(content_gap))
+                            .child(
+                                div()
+                                    .w(px(cover_size))
+                                    .flex_none()
+                                    .flex()
+                                    .flex_col()
+                                    .child(cover(cover_size))
+                                    .child(
+                                        div()
+                                            .mt(px(24.))
+                                            .type_style(ui::text::BOOK_TITLE)
+                                            .child(title.clone()),
+                                    )
+                                    .children(book.map(|item| {
+                                        super::credits(
+                                            item,
+                                            ui::text::CALLOUT,
+                                            palette.on_field_muted,
+                                            palette.on_field,
                                         )
-                                        .children(book.map(|item| {
-                                            super::credits(
-                                                item,
-                                                ui::text::CALLOUT,
-                                                palette.on_field_muted,
-                                                palette.on_field,
-                                            )
-                                            .mt(px(6.))
-                                        })),
-                                )
-                                .child(
-                                    // The hover fill hangs 8pt outside the text, so
-                                    // the text lines up with the column edge.
-                                    div().flex_1().min_w_0().min_h_0().ml(px(-8.)).child(
-                                        read_along_list(
-                                            self,
-                                            ReadAlongPlace::NowPlaying,
-                                            &palette,
-                                            cx.entity().downgrade(),
-                                            window,
-                                            cx,
-                                        ),
+                                        .mt(px(6.))
+                                    })),
+                            )
+                            .child(
+                                // The hover fill hangs 8pt outside the text, so
+                                // the text lines up with the column edge.
+                                div().flex_1().min_w_0().min_h_0().ml(px(-8.)).child(
+                                    read_along_list(
+                                        self,
+                                        ReadAlongPlace::NowPlaying,
+                                        &palette,
+                                        cx.entity().downgrade(),
+                                        window,
+                                        cx,
                                     ),
-                                )
-                        } else {
-                            // Cover and the book's name side by side, centred.
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .w_full()
-                                .max_w(px(measure))
-                                .flex()
-                                .items_center()
-                                .gap(px(content_gap))
-                                .child(cover(cover_size))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .max_w(px(560.))
-                                        .flex()
-                                        .flex_col()
-                                        .child(
-                                            div()
-                                                .type_style(if compact {
-                                                    ui::text::BOOK_TITLE
-                                                } else {
-                                                    ui::text::BOOK_DISPLAY
-                                                })
-                                                .child(title.clone()),
-                                        )
-                                        .children(subtitle.map(|subtitle| {
-                                            div()
-                                                .mt(px(12.))
-                                                .type_style(ui::text::LEAD)
-                                                .text_color(palette.on_field_muted)
-                                                .child(subtitle)
-                                        }))
-                                        .children(book.map(|item| {
-                                            super::credits(
-                                                item,
-                                                ui::text::LEAD,
-                                                palette.on_field_muted,
-                                                palette.on_field,
-                                            )
-                                            .mt(px(10.))
-                                        })),
-                                )
-                        })
-                        .child(
-                            // Progress sits right above the controls: time in, when
-                            // the chapter ends, time left in it.
-                            div()
-                                .flex_none()
-                                .w_full()
-                                .max_w(px(measure))
-                                .mt(px(25.))
-                                .child(scrubber)
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap(px(14.))
-                                        .type_style(ui::text::CAPTION.tabular())
-                                        .text_color(palette.on_field_muted)
-                                        .child(div().flex_none().child(time))
-                                        .child(
-                                            div().flex_1().min_w_0().flex().justify_center().child(
-                                                div().min_w_0().truncate().child(progress_note),
-                                            ),
-                                        )
-                                        .child(div().flex_none().child(chapter_countdown)),
                                 ),
-                        )
-                        .child(self.player_dock(
-                            compact,
-                            measure,
-                            &palette,
-                            field_pill,
-                            field_pill_muted,
-                            volume_control,
-                            cx,
-                        )),
-                );
+                            )
+                    } else {
+                        // Cover and the book's name side by side, centred.
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .w_full()
+                            .max_w(px(measure))
+                            .flex()
+                            .items_center()
+                            .gap(px(content_gap))
+                            .child(cover(cover_size))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .max_w(px(560.))
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .type_style(if compact {
+                                                ui::text::BOOK_TITLE
+                                            } else {
+                                                ui::text::BOOK_DISPLAY
+                                            })
+                                            .child(title.clone()),
+                                    )
+                                    .children(subtitle.map(|subtitle| {
+                                        div()
+                                            .mt(px(12.))
+                                            .type_style(ui::text::LEAD)
+                                            .text_color(palette.on_field_muted)
+                                            .child(subtitle)
+                                    }))
+                                    .children(book.map(|item| {
+                                        super::credits(
+                                            item,
+                                            ui::text::LEAD,
+                                            palette.on_field_muted,
+                                            palette.on_field,
+                                        )
+                                        .mt(px(10.))
+                                    })),
+                            )
+                    })
+                    .child(
+                        // Progress sits right above the controls: time in, when
+                        // the chapter ends, time left in it.
+                        div()
+                            .flex_none()
+                            .w_full()
+                            .max_w(px(measure))
+                            .mt(px(25.))
+                            .child(scrubber)
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(14.))
+                                    .type_style(ui::text::CAPTION.tabular())
+                                    .text_color(palette.on_field_muted)
+                                    .child(div().flex_none().child(time))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .flex()
+                                            .justify_center()
+                                            .child(div().min_w_0().truncate().child(progress_note)),
+                                    )
+                                    .child(div().flex_none().child(chapter_countdown)),
+                            ),
+                    )
+                    .child(self.player_dock(
+                        compact,
+                        measure,
+                        &palette,
+                        field_pill,
+                        field_pill_muted,
+                        volume_control,
+                        cx,
+                    )),
+            );
         // The player rises into place; reduced motion shows it immediately.
         if cx.reduce_motion() {
             return stage.into_any_element();
@@ -476,7 +486,10 @@ impl Shell {
                         sleep_chip,
                         cx,
                     ))
-                    .child(read_chip),
+                    .child(read_chip)
+                    .when(self.read_along_open, |el| {
+                        el.child(self.read_along_size_control(palette, cx))
+                    }),
             )
             .child(
                 div()
@@ -546,6 +559,64 @@ impl Shell {
     }
 }
 
+impl Shell {
+    /// Makes the read along text `delta` steps larger and saves it.
+    pub(crate) fn step_read_along_size(&mut self, delta: i8, cx: &mut Context<Self>) {
+        let current = cx.theme().settings;
+        let next = current.with_read_along_step(delta);
+        if next != current {
+            self.apply_appearance(next, cx);
+        }
+    }
+
+    /// Smaller and larger "A" buttons for the read along text, in one pill.
+    fn read_along_size_control(
+        &self,
+        palette: &ui::theme::BookPalette,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Div {
+        let settings = cx.theme().settings;
+        let at_min = settings.with_read_along_step(-1) == settings;
+        let at_max = settings.with_read_along_step(1) == settings;
+        let half = |id: &'static str, size: f32, delta: i8, disabled: bool| {
+            div()
+                .id(id)
+                .w(px(30.))
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .font_family(ui::typography::family::BOOK)
+                .text_size(px(size))
+                .text_color(if disabled {
+                    palette.on_field_muted.opacity(0.45)
+                } else {
+                    palette.on_field
+                })
+                .when(!disabled, |el| {
+                    el.cursor_pointer()
+                        .hover(|style| style.bg(palette.on_field_track))
+                        .active(|style| style.opacity(0.72))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.step_read_along_size(delta, cx)),
+                        )
+                })
+                .child("A")
+        };
+        div()
+            .h(px(ui::metrics::size::FIELD_PILL))
+            .flex_none()
+            .flex()
+            .rounded_full()
+            .overflow_hidden()
+            .border_1()
+            .border_color(palette.on_field_track)
+            .child(half("read-along-smaller", 13., -1, at_min))
+            .child(div().w(px(1.)).h_full().bg(palette.on_field_track))
+            .child(half("read-along-larger", 18., 1, at_max))
+    }
+}
+
 /// Audible's chapter titles often repeat their own number ("13. Increase
 /// Your Surface Area for Luck"), which disagrees with the position count
 /// beside it. Drops a leading "13. ", "13: " or "13 - ".
@@ -609,6 +680,7 @@ pub(crate) fn read_along_list(
         &shell.read_along_follow
     };
     let reduce_motion = cx.reduce_motion();
+    let text_scale = cx.theme().settings.read_along_scale();
     let message = |text: &str| {
         div()
             .type_style(ui::text::BODY)
@@ -619,8 +691,54 @@ pub(crate) fn read_along_list(
     let Some(active) = &shell.player else {
         return div().into_any_element();
     };
+    // An outlined action under a message: Download, Try again.
+    let action = |id: &'static str, label: &'static str, glyph: Icon| {
+        Chip::new(id)
+            .label(label)
+            .icon(glyph, palette.on_field)
+            .height(ui::metrics::size::POPUP)
+            .style(ChipStyle::Outline {
+                outline: palette.on_field_track,
+                content: palette.on_field,
+            })
+    };
+    let with_action = |text: &str, chip: Chip| {
+        div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(14.))
+            .child(message(text))
+            .child(chip)
+            .into_any_element()
+    };
     if backend::downloaded_path(&active.account_key, &active.asin).is_none() {
-        return message("Read along works for books downloaded to this Mac.");
+        // Read along needs the audio on this Mac; offer the download here
+        // and start transcribing once it lands.
+        return match &shell.download {
+            Some(download) if download.asin == active.asin => {
+                message("Downloading this book. Read along starts when it’s on this Mac.")
+            }
+            Some(_) => message(
+                "Read along works for books downloaded to this Mac. You can download this one when the current download finishes.",
+            ),
+            None => {
+                let key = active.account_key.clone();
+                let asin = active.asin.clone();
+                let title = active.title.clone();
+                let entity = entity.clone();
+                with_action(
+                    "Read along works for books downloaded to this Mac.",
+                    action("read-along-download", "Download", Icon::Download).on_click(
+                        move |_, _, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.download(key.clone(), asin.clone(), title.clone(), cx)
+                            });
+                        },
+                    ),
+                )
+            }
+        };
     }
     let Some(read) = &shell.read_along else {
         return transcript_placeholder("Getting ready", palette, mini, reduce_motion);
@@ -686,10 +804,17 @@ pub(crate) fn read_along_list(
                 )
                 .into_any_element();
         }
-        transcript::Phase::Unsupported(text) | transcript::Phase::Failed(text)
-            if job.lines.is_empty() =>
-        {
+        transcript::Phase::Unsupported(text) if job.lines.is_empty() => {
             return message(text);
+        }
+        transcript::Phase::Failed(text) if job.lines.is_empty() => {
+            let entity = entity.clone();
+            return with_action(
+                text,
+                action("read-along-retry", "Try again", Icon::Refresh).on_click(move |_, _, cx| {
+                    let _ = entity.update(cx, |this, cx| this.retry_read_along(cx));
+                }),
+            );
         }
         transcript::Phase::Transcribing if job.lines.is_empty() => {
             return transcript_placeholder(
@@ -783,11 +908,14 @@ pub(crate) fn read_along_list(
             .py(px(if mini { 3. } else { 4. }))
             .rounded(px(8.))
             .hover(|style| style.bg(palette.on_field_track))
-            .type_style(if mini {
-                ui::text::BOOK_READ_ALONG
-            } else {
-                ui::text::BOOK_CAPTION
-            })
+            .type_style(
+                if mini {
+                    ui::text::BOOK_READ_ALONG
+                } else {
+                    ui::text::BOOK_CAPTION
+                }
+                .scaled(text_scale),
+            )
             .text_color(color)
             .on_click({
                 let entity = entity.clone();

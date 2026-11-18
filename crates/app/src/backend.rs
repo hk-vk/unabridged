@@ -710,6 +710,7 @@ mod tests {
                     accent,
                     tint_with_cover: false,
                     app_icon: mode,
+                    read_along_step: 3,
                 };
                 let bytes = serde_json::to_vec(&AppearanceRecord::from(settings)).unwrap();
                 let restored: AppearanceRecord = serde_json::from_slice(&bytes).unwrap();
@@ -721,9 +722,14 @@ mod tests {
             accent: "unknown".into(),
             tint_with_cover: true,
             app_icon: None,
+            read_along_step: None,
         };
         assert_eq!(unknown.settings().mode, ui::theme::Mode::Light);
         assert_eq!(unknown.settings().app_icon, ui::theme::Mode::Automatic);
+        assert_eq!(
+            unknown.settings().read_along_step,
+            ui::theme::READ_ALONG_DEFAULT_STEP
+        );
         assert_eq!(unknown.settings().accent, ui::theme::AccentTheme::Ember);
     }
 
@@ -830,6 +836,9 @@ struct AppearanceRecord {
     /// Missing in files saved before the app icon setting existed.
     #[serde(default)]
     app_icon: Option<String>,
+    /// Missing in files saved before read along had a text size.
+    #[serde(default)]
+    read_along_step: Option<u8>,
 }
 
 impl From<ui::ThemeSettings> for AppearanceRecord {
@@ -839,6 +848,7 @@ impl From<ui::ThemeSettings> for AppearanceRecord {
             accent: settings.accent.name().into(),
             tint_with_cover: settings.tint_with_cover,
             app_icon: Some(settings.app_icon.label().into()),
+            read_along_step: Some(settings.read_along_step),
         }
     }
 }
@@ -862,7 +872,11 @@ impl AppearanceRecord {
             accent,
             tint_with_cover: self.tint_with_cover,
             app_icon,
+            read_along_step: ui::theme::READ_ALONG_DEFAULT_STEP,
         }
+        .with_read_along_step(self.read_along_step.map_or(0, |step| {
+            step as i8 - ui::theme::READ_ALONG_DEFAULT_STEP as i8
+        }))
     }
 }
 
