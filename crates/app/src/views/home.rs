@@ -2,6 +2,9 @@
 use crate::*;
 
 impl Shell {
+    /// A row of covers under a section heading. `resume_key` adds a hover
+    /// play button to books in progress.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn shelf(
         &self,
         title: &'static str,
@@ -9,21 +12,27 @@ impl Shell {
         books: &[&audible::models::LibraryItem],
         cover_side: f32,
         target: Page,
+        detail: Option<String>,
+        resume_key: Option<&str>,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
+        let mut header = SectionHeader::new(format!("{id}-all"), title).action(
+            "See all",
+            cx.listener(move |this, _, _, cx| {
+                this.page = target;
+                this.navigation_generation += 1;
+                cx.notify();
+            }),
+        );
+        if let Some(detail) = detail {
+            header = header.detail(detail);
+        }
         div()
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(SectionHeader::new(format!("{id}-all"), title).action(
-                "See all",
-                cx.listener(move |this, _, _, cx| {
-                    this.page = target;
-                    this.navigation_generation += 1;
-                    cx.notify();
-                }),
-            ))
+            .child(header)
             .child(
                 div()
                     .flex()
@@ -35,17 +44,71 @@ impl Shell {
                         let name = item.title.clone().unwrap_or_else(|| "Untitled".into());
                         let author = item.author_names();
                         let cover = self.covers.get(&asin).cloned();
-                        let detail = item
+                        let percent = book_progress(item).unwrap_or(0.);
+                        let in_progress = percent > 0. && !book_finished(item);
+                        let remaining = item
                             .listening_status
                             .as_ref()
                             .and_then(|status| status.time_remaining_seconds)
-                            .filter(|_| book_progress(item).unwrap_or(0.) > 0.)
-                            .map(|seconds| {
+                            .filter(|_| in_progress);
+                        // "38% · 5 hr 10 min left"; the last quarter hour reads
+                        // "Almost done" in the accent colour.
+                        let detail = match remaining {
+                            Some(seconds) if seconds < 15 * 60 => div()
+                                .flex()
+                                .gap(px(4.))
+                                .child(
+                                    div()
+                                        .text_color(theme.accent.text)
+                                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                        .child("Almost done"),
+                                )
+                                .child(format!(
+                                    "· {}",
+                                    model::format::time_left(std::time::Duration::from_secs(
+                                        seconds
+                                    ))
+                                )),
+                            Some(seconds) => div().child(format!(
+                                "{percent:.0}% · {}",
                                 model::format::time_left(std::time::Duration::from_secs(seconds))
-                            })
-                            .unwrap_or(author);
+                            )),
+                            None => div().child(author),
+                        };
+                        let group: gpui_kit::SharedString = format!("{id}-card-{asin}").into();
+                        let resume = resume_key.filter(|_| in_progress).map(|key| {
+                            let key = key.to_string();
+                            let asin = asin.clone();
+                            let title = name.clone();
+                            // Shown on hover; resumes without opening the book.
+                            div()
+                                .id(format!("{id}-play-{asin}"))
+                                .absolute()
+                                .right(px(8.))
+                                .bottom(px(20.))
+                                .size(px(34.))
+                                .rounded_full()
+                                .bg(gpui_kit::white().opacity(0.94))
+                                .shadow_md()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .opacity(0.)
+                                .group_hover(group.clone(), |style| style.opacity(1.))
+                                .cursor_pointer()
+                                .child(
+                                    ui::icon(Icon::Play)
+                                        .size(px(14.))
+                                        .text_color(theme.colors.window),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.resume_book(key.clone(), asin.clone(), title.clone(), cx);
+                                }))
+                        });
                         div()
                             .id(format!("{id}-{asin}"))
+                            .group(group.clone())
                             .w(px(cover_side))
                             .flex_none()
                             .cursor_pointer()
@@ -57,14 +120,42 @@ impl Shell {
                             .flex()
                             .flex_col()
                             .child(
-                                Cover::new(
-                                    cover
-                                        .map(gpui_kit::ImageSource::from)
-                                        .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
-                                    CoverSize::Square(cover_side),
-                                    ui::metrics::radius::COVER,
-                                )
-                                .elevation(Elevation::CoverShelf),
+                                div()
+                                    .relative()
+                                    .child(
+                                        Cover::new(
+                                            cover
+                                                .map(gpui_kit::ImageSource::from)
+                                                .unwrap_or_else(|| gpui_kit::ImageSource::from("")),
+                                            CoverSize::Square(cover_side),
+                                            ui::metrics::radius::COVER,
+                                        )
+                                        .elevation(Elevation::CoverShelf),
+                                    )
+                                    // Progress on the cover itself: a white bar on
+                                    // a dark strip reads on any cover colour.
+                                    .when(in_progress, |el| {
+                                        el.child(
+                                            div()
+                                                .absolute()
+                                                .left(px(8.))
+                                                .right(px(8.))
+                                                .bottom(px(8.))
+                                                .h(px(4.))
+                                                .rounded_full()
+                                                .bg(gpui_kit::black().opacity(0.45))
+                                                .child(
+                                                    div()
+                                                        .h_full()
+                                                        .w(gpui_kit::relative(
+                                                            (percent / 100.).clamp(0., 1.) as f32,
+                                                        ))
+                                                        .rounded_full()
+                                                        .bg(gpui_kit::white()),
+                                                ),
+                                        )
+                                    })
+                                    .children(resume),
                             )
                             .child(
                                 div()
@@ -77,13 +168,35 @@ impl Shell {
                                 div()
                                     .mt(px(2.))
                                     .truncate()
-                                    .type_style(ui::text::FOOTNOTE)
+                                    .type_style(ui::text::FOOTNOTE.tabular())
                                     .text_color(theme.colors.ink_secondary)
                                     .child(detail),
                             )
                     })),
             )
             .into_any_element()
+    }
+
+    /// Resumes a book from a shelf: toggles it when it is in the player, plays
+    /// it when it is on this Mac, otherwise downloads it.
+    fn resume_book(
+        &mut self,
+        key: String,
+        asin: audible::Asin,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .player
+            .as_ref()
+            .is_some_and(|player| player.asin == asin)
+        {
+            self.toggle_playback(cx);
+        } else if backend::downloaded_path(&key, &asin).is_some() {
+            self.start_player(key, asin, title, cx);
+        } else if self.download.is_none() {
+            self.download(key, asin, title, cx);
+        }
     }
 
     /// The resume action for a book: open the player when it is playing, play
@@ -121,11 +234,15 @@ impl Shell {
             .as_ref()
             .is_some_and(|player| player.asin == asin)
         {
+            let playing = self
+                .player
+                .as_ref()
+                .is_some_and(|player| player.player.is_playing());
             return Button::new(format!("{id}-player"))
-                .label("Now playing")
-                .icon(Icon::Play)
+                .label(if playing { "Pause" } else { "Play" })
+                .icon(if playing { Icon::Pause } else { Icon::Play })
                 .variant(variant)
-                .on_click(cx.listener(|this, _, _, cx| this.open_player(cx)))
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx)))
                 .into_any_element();
         }
         if backend::downloaded_path(&key, &asin).is_some() {
@@ -167,12 +284,6 @@ impl Shell {
         let asin = item.asin.clone();
         let open_asin = asin.clone();
         let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
-        let narrator = item.narrator_names();
-        let credit = if narrator.is_empty() {
-            item.author_names()
-        } else {
-            format!("{}, read by {narrator}", item.author_names())
-        };
         let percent = book_progress(item).unwrap_or(0.);
         let left = item
             .listening_status
@@ -219,12 +330,13 @@ impl Shell {
                             .flex_col()
                             .child(div().truncate().type_style(ui::text::BOOK_ROW).child(title))
                             .child(
-                                div()
-                                    .mt(px(3.))
-                                    .truncate()
-                                    .type_style(ui::text::BODY)
-                                    .text_color(theme.colors.ink_secondary)
-                                    .child(credit),
+                                super::credits(
+                                    item,
+                                    ui::text::BODY,
+                                    theme.colors.ink_secondary,
+                                    theme.colors.ink,
+                                )
+                                .mt(px(3.)),
                             )
                             .child(div().mt(px(14.)).child(SegmentedProgress::new(
                                 0.,
@@ -284,13 +396,12 @@ impl Shell {
             let details_asin = item.asin.clone();
             let chapters_asin = item.asin.clone();
             let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
-            let narrator = item.narrator_names();
-            let credit = if narrator.is_empty() {
-                item.author_names()
-            } else {
-                format!("{}, read by {narrator}", item.author_names())
-            };
             let cover = self.covers.get(&item.asin).cloned();
+            let active = self
+                .player
+                .as_ref()
+                .filter(|player| player.asin == item.asin);
+            let playing = active.is_some_and(|player| player.player.is_playing());
             // Progress is shown as a bar with a quiet caption, not a sentence.
             let percent = book_progress(item).unwrap_or(0.);
             let left = item
@@ -298,6 +409,30 @@ impl Shell {
                 .as_ref()
                 .and_then(|status| status.time_remaining_seconds)
                 .map(|seconds| model::format::time_left(std::time::Duration::from_secs(seconds)));
+            // When this book is in the player the bar shows its chapters,
+            // weighted by length: done, the one playing, still to come.
+            let timeline = active.map(|player| (player.timeline(), player.chapters.len()));
+            let bar = match &timeline {
+                Some((timeline, _))
+                    if timeline.chapter.is_some() && timeline.end > timeline.start =>
+                {
+                    let span = timeline.end - timeline.start;
+                    SegmentedProgress::new(
+                        (timeline.start / span) as f32,
+                        ((timeline.position - timeline.start) / span) as f32,
+                        ((timeline.duration - timeline.end).max(0.) / span) as f32,
+                    )
+                }
+                _ => SegmentedProgress::new(0., (percent / 100.) as f32, 0.),
+            };
+            let mut caption = vec![format!("{percent:.0}%")];
+            if let Some((timeline, total)) = &timeline
+                && let Some((index, _)) = &timeline.chapter
+            {
+                caption.push(format!("chapter {} of {total}", index + 1));
+            }
+            caption.extend(left);
+            let caption = caption.join(" · ");
             view = view.child(
                 div()
                     .flex()
@@ -331,8 +466,16 @@ impl Shell {
                             .child(
                                 div()
                                     .type_style(ui::text::CAPTION)
-                                    .text_color(color)
-                                    .child("Continue listening"),
+                                    .text_color(if playing {
+                                        cx.theme().accent.text
+                                    } else {
+                                        color
+                                    })
+                                    .child(if playing {
+                                        "Playing now"
+                                    } else {
+                                        "Continue listening"
+                                    }),
                             )
                             .child(
                                 div()
@@ -341,28 +484,28 @@ impl Shell {
                                     .child(title),
                             )
                             .child(
-                                div()
-                                    .mt(px(8.))
-                                    .type_style(ui::text::CALLOUT)
-                                    .text_color(color)
-                                    .child(credit),
+                                super::credits(
+                                    item,
+                                    ui::text::CALLOUT,
+                                    color,
+                                    cx.theme().colors.ink,
+                                )
+                                .mt(px(8.)),
                             )
                             .child(
                                 div()
-                                    .mt(px(20.))
-                                    .w(px(320.))
+                                    .mt(px(18.))
+                                    .w(px(440.))
+                                    .max_w_full()
                                     .flex()
                                     .flex_col()
                                     .gap(px(8.))
-                                    .child(SegmentedProgress::new(0., (percent / 100.) as f32, 0.))
+                                    .child(bar)
                                     .child(
                                         div()
-                                            .flex()
-                                            .justify_between()
                                             .type_style(ui::text::CAPTION.tabular())
                                             .text_color(color)
-                                            .child(format!("{percent:.0}%"))
-                                            .children(left),
+                                            .child(caption),
                                     ),
                             )
                             .child(
@@ -386,21 +529,33 @@ impl Shell {
                             ),
                     ),
             );
-            view = view.child(
-                self.shelf(
-                    "Still listening",
-                    "listening",
-                    &listening
-                        .iter()
-                        .skip(1)
-                        .take(6)
-                        .copied()
-                        .collect::<Vec<_>>(),
-                    160.,
-                    Page::Progress,
-                    cx,
-                ),
-            );
+            let others = &listening[1..];
+            let summary = (!others.is_empty()).then(|| {
+                let seconds: u64 = others
+                    .iter()
+                    .filter_map(|item| {
+                        item.listening_status
+                            .as_ref()
+                            .and_then(|status| status.time_remaining_seconds)
+                    })
+                    .sum();
+                format!(
+                    "{} {} · {}",
+                    others.len(),
+                    if others.len() == 1 { "book" } else { "books" },
+                    model::format::time_left(std::time::Duration::from_secs(seconds))
+                )
+            });
+            view = view.child(self.shelf(
+                "Still listening",
+                "listening",
+                &others.iter().take(6).copied().collect::<Vec<_>>(),
+                160.,
+                Page::Progress,
+                summary,
+                Some(&library.account_key),
+                cx,
+            ));
         }
         view = view.child(self.shelf(
             "Added recently",
@@ -408,6 +563,8 @@ impl Shell {
             &recent,
             118.,
             Page::AllBooks,
+            None,
+            None,
             cx,
         ));
         view.into_any_element()

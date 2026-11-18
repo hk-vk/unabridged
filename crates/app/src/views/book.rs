@@ -15,35 +15,8 @@ impl Shell {
         let theme = cx.theme().clone();
         let muted = theme.colors.ink_secondary;
         let title = product.title.clone().unwrap_or_else(|| "Untitled".into());
-        let authors: Vec<String> = product.authors.iter().map(|a| a.name.clone()).collect();
-        let narrators: Vec<String> = product.narrators.iter().map(|n| n.name.clone()).collect();
-        // A sole author reading their own book is "the author", not a repeat.
-        let narrator = if authors.len() == 1 && narrators == authors {
-            "the author".to_string()
-        } else {
-            model::book::join_names(&narrators)
-        };
-        let ink = theme.colors.ink;
-        let credit_part = |label: &'static str, names: String| {
-            div()
-                .flex()
-                .gap(px(5.))
-                .child(div().text_color(muted).child(label))
-                .child(div().text_color(ink).child(names))
-        };
-        let credits = div()
-            .mt(px(10.))
-            .flex()
-            .flex_wrap()
-            .gap_x(px(18.))
-            .gap_y(px(4.))
-            .type_style(ui::text::CALLOUT)
-            .when(!authors.is_empty(), |el| {
-                el.child(credit_part("By", model::book::join_names(&authors)))
-            })
-            .when(!narrators.is_empty(), |el| {
-                el.child(credit_part("Read by", narrator))
-            });
+        let credits =
+            super::credits(product, ui::text::CALLOUT, muted, theme.colors.ink).mt(px(10.));
         let cover = self.covers.get(&product.asin).cloned();
         let blurb = product
             .merchandising_summary
@@ -137,7 +110,11 @@ impl Shell {
                             .flex_col()
                             .gap(px(12.))
                             .type_style(ui::text::BLURB)
-                            .children(paragraphs.into_iter().map(|paragraph| div().child(paragraph)))
+                            .children(
+                                paragraphs
+                                    .into_iter()
+                                    .map(|paragraph| div().child(paragraph)),
+                            )
                     }))
                     .when(!facts.is_empty(), |el: gpui_kit::Div| {
                         el.child(div().w(px(240.)).flex_none().flex().flex_col().children(

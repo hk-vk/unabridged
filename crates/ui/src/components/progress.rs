@@ -64,6 +64,7 @@ pub struct Scrubber {
     colors: ScrubberColors,
     track: f32,
     knob: f32,
+    hit: f32,
     on_seek: Option<SeekHandler>,
 }
 
@@ -76,6 +77,7 @@ impl Scrubber {
             colors,
             track: size::SCRUBBER_TRACK,
             knob: size::SCRUBBER_KNOB,
+            hit: 0.0,
             on_seek: None,
         }
     }
@@ -84,6 +86,12 @@ impl Scrubber {
     pub fn thickness(mut self, track: f32, knob: f32) -> Self {
         self.track = track;
         self.knob = knob;
+        self
+    }
+
+    /// Makes the clickable strip at least `height` tall, centred on the track.
+    pub fn hit_area(mut self, height: f32) -> Self {
+        self.hit = height;
         self
     }
 
@@ -117,11 +125,12 @@ impl RenderOnce for Scrubber {
             ]
         });
 
+        let height = self.hit.max(self.knob);
         div()
             .id(self.id)
             .relative()
             .w_full()
-            .h(px(self.knob))
+            .h(px(height))
             .flex()
             .items_center()
             .child({
@@ -147,7 +156,7 @@ impl RenderOnce for Scrubber {
             .child(
                 div()
                     .absolute()
-                    .top_0()
+                    .top(px((height - self.knob) / 2.0))
                     .left(relative(self.fraction))
                     .ml(px(-self.knob / 2.0))
                     .size(px(self.knob))

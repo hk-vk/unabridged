@@ -48,6 +48,13 @@ pub enum ChipStyle {
         /// Text and glyph colour.
         content: Hsla,
     },
+    /// The outlined pill's "on" state: same shape and size, filled with `fill`.
+    OutlineSelected {
+        /// Background colour (also the stroke, so the size does not change).
+        fill: Hsla,
+        /// Text and glyph colour.
+        content: Hsla,
+    },
 }
 
 /// A compact control with an optional glyph and a label.
@@ -168,6 +175,17 @@ impl RenderOnce for Chip {
                     .gap(px(OUTLINE_GAP))
                     .border_1()
                     .border_color(outline),
+                content,
+                icon_size::SMALL,
+                text::BODY,
+            ),
+            ChipStyle::OutlineSelected { fill, content } => (
+                base.rounded_full()
+                    .px(px(OUTLINE_PADDING))
+                    .gap(px(OUTLINE_GAP))
+                    .border_1()
+                    .border_color(fill)
+                    .bg(fill),
                 content,
                 icon_size::SMALL,
                 text::BODY,

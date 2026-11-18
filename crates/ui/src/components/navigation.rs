@@ -110,7 +110,13 @@ impl RenderOnce for SidebarItem {
                 let selected = self.selected;
                 let fill = theme.colors.fill;
                 el.cursor_pointer()
-                    .hover(move |style| if selected { style.opacity(0.86) } else { style.bg(fill) })
+                    .hover(move |style| {
+                        if selected {
+                            style.opacity(0.86)
+                        } else {
+                            style.bg(fill)
+                        }
+                    })
                     .on_click(move |e, w, cx| handler(e, w, cx))
             })
     }
@@ -186,6 +192,7 @@ impl RenderOnce for Toolbar {
 pub struct SectionHeader {
     id: ElementId,
     title: SharedString,
+    detail: Option<SharedString>,
     action: Option<(SharedString, ClickHandler)>,
 }
 
@@ -195,8 +202,15 @@ impl SectionHeader {
         Self {
             id: id.into(),
             title: title.into(),
+            detail: None,
             action: None,
         }
+    }
+
+    /// Adds a quiet note after the title ("4 books · 25 hr left").
+    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 
     /// Adds a trailing link.
@@ -219,9 +233,23 @@ impl RenderOnce for SectionHeader {
             .items_baseline()
             .child(
                 div()
-                    .text_color(theme.colors.ink)
-                    .type_style(text::SECTION_TITLE)
-                    .child(self.title),
+                    .flex()
+                    .items_baseline()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .text_color(theme.colors.ink)
+                            .type_style(text::SECTION_TITLE)
+                            .child(self.title),
+                    )
+                    .when_some(self.detail, |el, detail| {
+                        el.child(
+                            div()
+                                .text_color(theme.colors.ink_secondary)
+                                .type_style(text::CAPTION.tabular())
+                                .child(detail),
+                        )
+                    }),
             )
             .when_some(self.action, |el, (label, handler)| {
                 el.child(

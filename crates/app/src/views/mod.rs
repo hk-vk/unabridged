@@ -13,6 +13,43 @@ mod settings;
 
 use crate::*;
 
+/// "By Cate Hall and Sasha Chapin   Read by Cate Hall": grey labels, names in
+/// `names`. A sole author reading their own book is "the author". Wraps onto
+/// two lines when narrow.
+pub(crate) fn credits(
+    product: &audible::models::Product,
+    style: ui::TypeStyle,
+    label: gpui_kit::Hsla,
+    names: gpui_kit::Hsla,
+) -> gpui_kit::Div {
+    let authors: Vec<String> = product.authors.iter().map(|a| a.name.clone()).collect();
+    let narrators: Vec<String> = product.narrators.iter().map(|n| n.name.clone()).collect();
+    let narrator = if authors.len() == 1 && narrators == authors {
+        "the author".to_string()
+    } else {
+        model::book::join_names(&narrators)
+    };
+    let part = |caption: &'static str, who: String| {
+        div()
+            .flex()
+            .gap(px(5.))
+            .child(div().flex_none().text_color(label).child(caption))
+            .child(div().min_w_0().truncate().text_color(names).child(who))
+    };
+    div()
+        .flex()
+        .flex_wrap()
+        .gap_x(px(18.))
+        .gap_y(px(4.))
+        .type_style(style)
+        .when(!authors.is_empty(), |el| {
+            el.child(part("By", model::book::join_names(&authors)))
+        })
+        .when(!narrators.is_empty(), |el| {
+            el.child(part("Read by", narrator))
+        })
+}
+
 /// A page heading for empty and status states.
 pub(crate) fn heading(title: &'static str) -> gpui_kit::Div {
     div().type_style(ui::text::BOOK_TITLE).child(title)
@@ -118,11 +155,21 @@ impl Shell {
         let color = cx.theme().colors.ink_secondary;
         let copy = |text: String| copy(text, color);
         let base = page_base;
-        let status = |text: &'static str| div().type_style(ui::text::BODY).text_color(color).child(ShimmerText::new(text));
+        let status = |text: &'static str| {
+            div()
+                .type_style(ui::text::BODY)
+                .text_color(color)
+                .child(ShimmerText::new(text))
+        };
         // A heading and its explanation read as one group; the gap to the
         // controls below is the page gap (18px), more than twice this one.
         let intro = |title: &'static str, text: &'static str| {
-            div().flex().flex_col().gap(px(8.)).child(heading(title)).child(copy(text.into()))
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(heading(title))
+                .child(copy(text.into()))
         };
         match &self.account {
             Account::Loading if self.connecting_after_sign_in => base()
@@ -182,22 +229,61 @@ fn sign_in_steps(current: usize, cx: &Context<Shell>) -> gpui_kit::Div {
     let colors = cx.theme().colors;
     let done_color: gpui_kit::Hsla = gpui_kit::rgb(0x3b8a4a).into();
     let mut row = div().flex().items_center().gap(px(10.)).mb(px(6.));
-    for (index, label) in ["Choose store", "Sign in", "Load library"].into_iter().enumerate() {
+    for (index, label) in ["Choose store", "Sign in", "Load library"]
+        .into_iter()
+        .enumerate()
+    {
         if index > 0 {
-            let line = if index <= current { done_color } else { colors.hairline };
+            let line = if index <= current {
+                done_color
+            } else {
+                colors.hairline
+            };
             row = row.child(div().h(px(1.)).w(px(32.)).bg(line));
         }
-        let marker = div().flex().items_center().justify_center().size(px(18.)).rounded_full();
+        let marker = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(18.))
+            .rounded_full();
         let marker = if index < current {
-            marker.bg(done_color).child(ui::icon(Icon::Tick).size(px(10.)).text_color(colors.window))
+            marker
+                .bg(done_color)
+                .child(ui::icon(Icon::Tick).size(px(10.)).text_color(colors.window))
         } else {
-            let ink = if index == current { colors.ink } else { colors.ink_secondary };
-            marker.border_1().border_color(if index == current { colors.ink } else { colors.hairline })
-                .child(div().type_style(ui::text::FOOTNOTE_STRONG).text_color(ink).child((index + 1).to_string()))
+            let ink = if index == current {
+                colors.ink
+            } else {
+                colors.ink_secondary
+            };
+            marker
+                .border_1()
+                .border_color(if index == current {
+                    colors.ink
+                } else {
+                    colors.hairline
+                })
+                .child(
+                    div()
+                        .type_style(ui::text::FOOTNOTE_STRONG)
+                        .text_color(ink)
+                        .child((index + 1).to_string()),
+                )
         };
-        let style = if index == current { ui::text::CAPTION_MEDIUM } else { ui::text::CAPTION };
-        let text = if index == current { colors.ink } else { colors.ink_secondary };
-        row = row.child(marker).child(div().type_style(style).text_color(text).child(label));
+        let style = if index == current {
+            ui::text::CAPTION_MEDIUM
+        } else {
+            ui::text::CAPTION
+        };
+        let text = if index == current {
+            colors.ink
+        } else {
+            colors.ink_secondary
+        };
+        row = row
+            .child(marker)
+            .child(div().type_style(style).text_color(text).child(label));
     }
     row
 }
