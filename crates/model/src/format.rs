@@ -84,14 +84,12 @@ pub fn percent(value: u32) -> String {
     format!("{value}%")
 }
 
-/// "1.3×", "1×".
+/// "1.25×", "1.3×", "1×": up to two decimals, without trailing zeros, so
+/// presets like 1.25 are not shown as their rounded neighbour.
 pub fn speed(rate: f32) -> String {
-    let tenths = (rate * 10.0).round() / 10.0;
-    if tenths.fract() == 0.0 {
-        format!("{tenths:.0}{TIMES}")
-    } else {
-        format!("{tenths:.1}{TIMES}")
-    }
+    let text = format!("{:.2}", (rate * 100.0).round() / 100.0);
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    format!("{text}{TIMES}")
 }
 
 /// "9:32 PM".
@@ -291,6 +289,9 @@ mod tests {
         assert_eq!(speed(1.3), "1.3\u{d7}");
         assert_eq!(speed(1.0), "1\u{d7}");
         assert_eq!(speed(2.0), "2\u{d7}");
+        assert_eq!(speed(1.25), "1.25\u{d7}");
+        assert_eq!(speed(0.75), "0.75\u{d7}");
+        assert_eq!(speed(1.1), "1.1\u{d7}");
     }
 
     #[test]

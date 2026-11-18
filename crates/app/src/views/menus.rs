@@ -396,7 +396,7 @@ impl Shell {
                         .font_family("Geist Pixel")
                         .text_size(px(30.))
                         .text_color(colors.ink)
-                        .child(format!("{rate:.2}×")),
+                        .child(model::format::speed(rate)),
                 )
                 .child(step("speed-faster", Icon::Plus, SPEED_STEP, weak))
                 .into_any_element()
