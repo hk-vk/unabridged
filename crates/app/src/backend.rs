@@ -709,6 +709,7 @@ mod tests {
                     mode,
                     accent,
                     tint_with_cover: false,
+                    app_icon: mode,
                 };
                 let bytes = serde_json::to_vec(&AppearanceRecord::from(settings)).unwrap();
                 let restored: AppearanceRecord = serde_json::from_slice(&bytes).unwrap();
@@ -719,8 +720,10 @@ mod tests {
             mode: "unknown".into(),
             accent: "unknown".into(),
             tint_with_cover: true,
+            app_icon: None,
         };
         assert_eq!(unknown.settings().mode, ui::theme::Mode::Light);
+        assert_eq!(unknown.settings().app_icon, ui::theme::Mode::Automatic);
         assert_eq!(unknown.settings().accent, ui::theme::AccentTheme::Ember);
     }
 
@@ -824,6 +827,9 @@ struct AppearanceRecord {
     mode: String,
     accent: String,
     tint_with_cover: bool,
+    /// Missing in files saved before the app icon setting existed.
+    #[serde(default)]
+    app_icon: Option<String>,
 }
 
 impl From<ui::ThemeSettings> for AppearanceRecord {
@@ -832,6 +838,7 @@ impl From<ui::ThemeSettings> for AppearanceRecord {
             mode: settings.mode.label().into(),
             accent: settings.accent.name().into(),
             tint_with_cover: settings.tint_with_cover,
+            app_icon: Some(settings.app_icon.label().into()),
         }
     }
 }
@@ -846,10 +853,15 @@ impl AppearanceRecord {
             .into_iter()
             .find(|accent| accent.name() == self.accent)
             .unwrap_or_default();
+        let app_icon = ui::theme::Mode::ALL
+            .into_iter()
+            .find(|mode| Some(mode.label()) == self.app_icon.as_deref())
+            .unwrap_or_default();
         ui::ThemeSettings {
             mode,
             accent,
             tint_with_cover: self.tint_with_cover,
+            app_icon,
         }
     }
 }

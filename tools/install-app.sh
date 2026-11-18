@@ -37,6 +37,8 @@ fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$root/assets/macos/Info.plist" "$app/Contents/Info.plist"
 cp "$root/assets/macos/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+# The light icon the app swaps into the Dock (Settings > Appearance > App icon).
+cp "$root/assets/macos/AppIcon-light.icns" "$app/Contents/Resources/AppIcon-light.icns"
 cp "$root/target/debug/better-audible" "$binary.new"
 mv -f "$binary.new" "$binary"
 if [ -f "$root/target/debug/ba-transcribe" ]; then

@@ -10,7 +10,8 @@ impl Shell {
         });
         let subscriptions = vec![
             cx.observe_window_appearance(window, |_, window, cx| {
-                ui::Theme::sync_system_appearance(window.appearance(), cx)
+                ui::Theme::sync_system_appearance(window.appearance(), cx);
+                sync_app_icon(window.appearance(), cx);
             }),
             // Coming back to the app picks up listening done on other devices
             // and books added since launch.
@@ -158,7 +159,8 @@ impl Shell {
                             this.follow_read_along(cx.reduce_motion());
                             cx.notify();
                         }
-                        if let Some(active) = this.player.as_ref().filter(|p| p.player.is_playing()) {
+                        if let Some(active) = this.player.as_ref().filter(|p| p.player.is_playing())
+                        {
                             ticks += 1;
                             if ticks >= 150 {
                                 this.sync_position(cx);

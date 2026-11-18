@@ -67,3 +67,24 @@ void ba_window_ghost(void *view) {
     window.collectionBehavior |= NSWindowCollectionBehaviorCanJoinAllSpaces |
                                  NSWindowCollectionBehaviorFullScreenAuxiliary;
 }
+
+// Shows the light or dark app icon in the Dock and app switcher. The Finder
+// icon stays the bundle's dark one. Outside an app bundle there is no icon to
+// load, so this does nothing.
+void ba_set_app_icon(bool light) {
+    static int current = -1;
+    if (current == (int)light) {
+        return;
+    }
+    NSString *name = light ? @"AppIcon-light" : @"AppIcon";
+    NSString *path = [NSBundle.mainBundle pathForResource:name ofType:@"icns"];
+    if (path == nil) {
+        return;
+    }
+    NSImage *image = [[NSImage alloc] initWithContentsOfFile:path];
+    if (image == nil) {
+        return;
+    }
+    NSApp.applicationIconImage = image;
+    current = (int)light;
+}

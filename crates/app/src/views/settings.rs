@@ -5,6 +5,7 @@ use ui::components::Switch;
 impl Shell {
     fn apply_appearance(&mut self, settings: ui::ThemeSettings, cx: &mut Context<Self>) {
         ui::Theme::apply_settings(settings, cx);
+        crate::sync_app_icon(cx.window_appearance(), cx);
         let version = backend::register_appearance_write();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -38,6 +39,24 @@ impl Shell {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let mut settings = cx.theme().settings;
                         settings.mode = mode;
+                        this.apply_appearance(settings, cx);
+                    }))
+            })
+            .collect::<Vec<_>>();
+        let icons = ui::theme::Mode::ALL
+            .into_iter()
+            .map(|mode| {
+                let selected = settings.app_icon == mode;
+                Button::new(format!("app-icon-{}", mode.label()))
+                    .label(mode.label())
+                    .variant(if selected {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Secondary
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let mut settings = cx.theme().settings;
+                        settings.app_icon = mode;
                         this.apply_appearance(settings, cx);
                     }))
             })
@@ -116,6 +135,14 @@ impl Shell {
                     .gap(px(10.))
                     .child(div().type_style(ui::text::BODY_MEDIUM).child("Mode"))
                     .child(div().flex().gap(px(10.)).children(modes)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(div().type_style(ui::text::BODY_MEDIUM).child("App icon"))
+                    .child(div().flex().gap(px(10.)).children(icons)),
             )
             .child(
                 div()

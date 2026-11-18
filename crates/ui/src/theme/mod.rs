@@ -78,6 +78,8 @@ pub struct ThemeSettings {
     pub accent: AccentTheme,
     /// Whether Now Playing and the mini player take their colour from the cover.
     pub tint_with_cover: bool,
+    /// Which app icon the Dock shows: light, dark or following the system.
+    pub app_icon: Mode,
 }
 
 impl Default for ThemeSettings {
@@ -86,6 +88,7 @@ impl Default for ThemeSettings {
             mode: Mode::Automatic,
             accent: AccentTheme::Ember,
             tint_with_cover: true,
+            app_icon: Mode::Automatic,
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Better Audible's native application shell.
 mod backend;
-mod browser_tab;
 mod books;
+mod browser_tab;
 mod library;
 mod malayalam;
 mod playback;
@@ -364,6 +364,21 @@ fn reopen(cx: &mut gpui_kit::App) {
     cx.activate(true);
 }
 
+/// Shows the light or dark app icon in the Dock, per Settings > Appearance.
+pub(crate) fn sync_app_icon(system: gpui_kit::WindowAppearance, cx: &gpui_kit::App) {
+    let light = cx.theme().settings.app_icon.resolve(system) == ui::theme::Appearance::Light;
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn ba_set_app_icon(light: bool);
+        }
+        // SAFETY: plain value argument; AppKit is called on the main thread.
+        unsafe { ba_set_app_icon(light) };
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = light;
+}
+
 fn main() {
     let app = gpui_kit::application().with_assets(ui::Assets);
     app.on_reopen(reopen);
@@ -375,6 +390,7 @@ fn main() {
             cx.quit();
             return;
         }
+        sync_app_icon(cx.window_appearance(), cx);
         open_main_window(cx);
     });
 }
