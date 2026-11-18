@@ -73,7 +73,7 @@ impl Book {
 }
 
 /// "A", "A and B", "A, B and C".
-fn join_names(names: &[String]) -> String {
+pub fn join_names(names: &[String]) -> String {
     match names {
         [] => String::new(),
         [one] => one.clone(),

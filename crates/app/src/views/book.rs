@@ -15,23 +15,35 @@ impl Shell {
         let theme = cx.theme().clone();
         let muted = theme.colors.ink_secondary;
         let title = product.title.clone().unwrap_or_else(|| "Untitled".into());
-        let narrator = product
-            .narrators
-            .iter()
-            .map(|n| n.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let author = product
-            .authors
-            .iter()
-            .map(|a| a.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let credit = if narrator.is_empty() {
-            author
+        let authors: Vec<String> = product.authors.iter().map(|a| a.name.clone()).collect();
+        let narrators: Vec<String> = product.narrators.iter().map(|n| n.name.clone()).collect();
+        // A sole author reading their own book is "the author", not a repeat.
+        let narrator = if authors.len() == 1 && narrators == authors {
+            "the author".to_string()
         } else {
-            format!("{author}, read by {narrator}")
+            model::book::join_names(&narrators)
         };
+        let ink = theme.colors.ink;
+        let credit_part = |label: &'static str, names: String| {
+            div()
+                .flex()
+                .gap(px(5.))
+                .child(div().text_color(muted).child(label))
+                .child(div().text_color(ink).child(names))
+        };
+        let credits = div()
+            .mt(px(10.))
+            .flex()
+            .flex_wrap()
+            .gap_x(px(18.))
+            .gap_y(px(4.))
+            .type_style(ui::text::CALLOUT)
+            .when(!authors.is_empty(), |el| {
+                el.child(credit_part("By", model::book::join_names(&authors)))
+            })
+            .when(!narrators.is_empty(), |el| {
+                el.child(credit_part("Read by", narrator))
+            });
         let cover = self.covers.get(&product.asin).cloned();
         let blurb = product
             .merchandising_summary
@@ -101,13 +113,7 @@ impl Shell {
                                     .text_color(muted)
                                     .child(subtitle)
                             }))
-                            .child(
-                                div()
-                                    .mt(px(8.))
-                                    .type_style(ui::text::CALLOUT)
-                                    .text_color(muted)
-                                    .child(credit),
-                            )
+                            .child(credits)
                             .children(sentence.map(|sentence| {
                                 div()
                                     .mt(px(18.))
