@@ -97,6 +97,12 @@ cargo run -p better-audible    # needs rustup and Xcode 26 or later
 
 Releases: [docs/releasing.md](docs/releasing.md).
 
+## Acknowledgments
+
+- [mkb79/Audible](https://github.com/mkb79/Audible) and
+  [audible-cli](https://github.com/mkb79/audible-cli), the reference for how
+  Audible's sign-in and API work.
+
 ## License
 
 MIT or Apache-2.0, at your option. Bundled fonts, icons and libraries keep
