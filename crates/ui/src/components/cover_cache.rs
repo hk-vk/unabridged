@@ -111,7 +111,9 @@ fn sweep(cx: &mut App) -> bool {
     let cache = cx.default_global::<CoverCache>();
     // A closed window's atlas is gone with it; its decoded images go here.
     let mut freed = cache.windows.len();
-    cache.windows.retain(|_, covers| open.contains(&covers.handle));
+    cache
+        .windows
+        .retain(|_, covers| open.contains(&covers.handle));
     freed -= cache.windows.len();
 
     let mut drops = Vec::new();

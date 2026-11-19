@@ -640,7 +640,10 @@ impl Shell {
 fn cover_color(path: &std::path::Path) -> Option<gpui_kit::Hsla> {
     let saved = path.with_extension("color");
     if let Ok(text) = std::fs::read_to_string(&saved) {
-        let parts: Vec<f32> = text.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        let parts: Vec<f32> = text
+            .split_whitespace()
+            .filter_map(|v| v.parse().ok())
+            .collect();
         if let [h, s, l, a] = parts[..] {
             return Some(gpui_kit::hsla(h, s, l, a));
         }

@@ -635,9 +635,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(restored.credentials().await, client.credentials().await);
-        let mode = |path: &std::path::Path| {
-            std::fs::metadata(path).unwrap().permissions().mode() & 0o777
-        };
+        let mode =
+            |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&folder), 0o700);
         assert_eq!(mode(&folder.join("default.json")), 0o600);
         store.delete("default").unwrap();

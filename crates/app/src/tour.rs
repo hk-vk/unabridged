@@ -61,7 +61,12 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
                 }
                 cx.notify();
             });
-            wait(if page == Page::Explore { 10 } else { SETTLE.as_secs() }).await;
+            wait(if page == Page::Explore {
+                10
+            } else {
+                SETTLE.as_secs()
+            })
+            .await;
             println!("TOUR page {name}");
         }
         wait(10).await;

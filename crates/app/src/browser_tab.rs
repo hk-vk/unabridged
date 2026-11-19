@@ -30,7 +30,10 @@ pub enum Scan {
 pub fn find_redirect() -> Scan {
     let running = running_bundle_ids();
     let mut denied = false;
-    for id in BROWSERS.iter().filter(|id| running.iter().any(|r| r == *id)) {
+    for id in BROWSERS
+        .iter()
+        .filter(|id| running.iter().any(|r| r == *id))
+    {
         match scan_browser(id) {
             Ok(Some(url)) => return Scan::Found(url),
             Ok(None) => {}

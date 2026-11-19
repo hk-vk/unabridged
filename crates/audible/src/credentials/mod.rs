@@ -15,10 +15,10 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use secret::Secret;
-#[cfg(target_os = "macos")]
-pub use store::KeychainStore;
 #[cfg(unix)]
 pub use store::FileStore;
+#[cfg(target_os = "macos")]
+pub use store::KeychainStore;
 pub use store::{CredentialStore, MemoryStore};
 
 use crate::auth::DeviceSerial;
