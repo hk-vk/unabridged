@@ -126,16 +126,16 @@ jobs:
 
       - name: Update the cask
         if: env.PUBLISH == 'true'
+        working-directory: tap
         run: |
-          mkdir -p tap/Casks
-          sed -e "s/@VERSION@/$VERSION/" -e "s/@SHA256@/$SHA256/" packaging/unabridged.rb \
-            | sed '/^# /d' > tap/Casks/unabridged.rb
-          cd tap
-          git add Casks/unabridged.rb
-          git diff --cached
+          sed -i '' -E \
+            -e "s/^  version \".*\"/  version \"$VERSION\"/" \
+            -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
+            Casks/unabridged.rb
+          git diff
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Unabridged $VERSION"
+          git commit -am "Unabridged $VERSION"
           git push
 
       - name: Remove the signing keychain

@@ -29,7 +29,10 @@ the zip click Open Anyway once.
    tag, unpushed (`gh workflow run release.yml -R hk-vk/unabridged -f
    tag=v0.1.0`). It tags the run's commit itself, uploads the zip, notes and
    appcast as an artifact and publishes nothing.
-5. **Make the repo public** when you're ready (`gh repo edit hk-vk/unabridged
+5. **Homebrew cask.** `Casks/unabridged.rb` must exist in hk-vk/homebrew-tap
+   before the first release; the workflow only updates its version and
+   checksum, as it does for BadgeBar.
+6. **Make the repo public** when you're ready (`gh repo edit hk-vk/unabridged
    --visibility public --accept-visibility-change-consequences`). The update
    feed and Homebrew downloads only work once it is public.
 
