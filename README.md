@@ -9,8 +9,6 @@ with your Audible account and you get your whole library,
 offline downloads, a player built around chapters, a read-along transcript and
 a floating mini player, with your place kept in sync with your phone.
 
-Unabridged is for **macOS** today. Other platforms are coming later.
-
 > Unabridged is an independent project. It is not made, endorsed or supported by
 > Audible or Amazon. "Audible" is a trademark of Audible, Inc.
 
