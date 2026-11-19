@@ -376,6 +376,35 @@ fn reopen(cx: &mut gpui_kit::App) {
     cx.activate(true);
 }
 
+/// Whether this build can update itself (a release build with Sparkle).
+pub(crate) static UPDATES_AVAILABLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Starts Sparkle's daily update checks when the bundle carries it.
+fn start_updater() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn ba_updater_start() -> bool;
+        }
+        // SAFETY: no arguments; called once on the main thread at launch.
+        let available = unsafe { ba_updater_start() };
+        UPDATES_AVAILABLE.store(available, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// "Check for Updates…": Sparkle shows the result in its own window.
+pub(crate) fn check_for_updates() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn ba_updater_check();
+        }
+        // SAFETY: no arguments; called from a click on the main thread.
+        unsafe { ba_updater_check() };
+    }
+}
+
 /// Shows the light or dark app icon in the Dock, per Settings > Appearance.
 pub(crate) fn sync_app_icon(system: gpui_kit::WindowAppearance, cx: &gpui_kit::App) {
     let light = cx.theme().settings.app_icon.resolve(system) == ui::theme::Appearance::Light;
@@ -408,6 +437,7 @@ fn main() {
             return;
         }
         sync_app_icon(cx.window_appearance(), cx);
+        start_updater();
         open_main_window(cx);
     });
 }

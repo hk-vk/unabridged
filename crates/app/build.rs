@@ -3,10 +3,12 @@
 fn main() {
     println!("cargo:rerun-if-changed=src/player.m");
     println!("cargo:rerun-if-changed=src/window.m");
+    println!("cargo:rerun-if-changed=src/updater.m");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         cc::Build::new()
             .file("src/player.m")
             .file("src/window.m")
+            .file("src/updater.m")
             .flag("-fobjc-arc")
             .compile("better_audible_player");
         println!("cargo:rustc-link-lib=framework=AVFoundation");

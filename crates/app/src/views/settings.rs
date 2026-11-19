@@ -192,6 +192,7 @@ impl Shell {
             ))
             .children(self.account_settings(cx))
             .children(self.storage_settings(cx))
+            .child(self.about_settings(cx))
             .into_any_element()
     }
 
@@ -259,6 +260,34 @@ impl Shell {
         };
         let row = setting_row(format!("Audible {marketplace}"), caption, actions, &theme);
         Some(settings_section(Icon::UserCircle, "Account", row, cx))
+    }
+
+    /// The version, and "Check for Updates…" in release builds.
+    fn about_settings(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let updates = crate::UPDATES_AVAILABLE.load(std::sync::atomic::Ordering::Relaxed);
+        let caption = if updates {
+            "Checks for updates once a day and installs them when you agree."
+        } else {
+            "This copy was built locally, so it doesn’t update itself."
+        };
+        let action = div().children(updates.then(|| {
+            Button::new("check-for-updates")
+                .label("Check for Updates…")
+                .icon(Icon::Refresh)
+                .on_click(|_, _, _| crate::check_for_updates())
+        }));
+        settings_section(
+            Icon::Settings,
+            "About",
+            setting_row(
+                format!("Unabridged {}", env!("CARGO_PKG_VERSION")),
+                caption.into(),
+                action,
+                &theme,
+            ),
+            cx,
+        )
     }
 
     fn storage_settings(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
