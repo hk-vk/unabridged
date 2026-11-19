@@ -43,6 +43,10 @@ jobs:
       - name: Install Rust
         run: rustup show active-toolchain || rustup toolchain install
 
+      # CI already tested this commit; the release only builds. The cache keeps
+      # the dependencies compiled between releases.
+      - uses: Swatinem/rust-cache@v2
+
       - name: Check the version
         run: |
           VERSION="${TAG#v}"
@@ -53,9 +57,6 @@ jobs:
             exit 1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Run the tests
-        run: cargo test --workspace
 
       # The same self-signed "Unabridged Signing" identity for every release, so
       # macOS keeps the app's permissions across updates.
