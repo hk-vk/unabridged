@@ -1,6 +1,6 @@
 #!/bin/sh
 # Prints the GitHub release notes for a tag: its CHANGELOG.md section, how to
-# install, and the commits since the previous tag.
+# install, and the commits since the previous tag (none for the first).
 #
 # usage: tools/release-notes.sh v0.1.0 [path/to/Unabridged-0.1.0.zip]
 set -eu
@@ -33,8 +33,10 @@ NOTES
 if [ -n "$zip" ]; then
     printf '\nSHA-256: `%s`\n' "$(shasum -a 256 "$zip" | cut -d' ' -f1)"
 fi
-printf '\n## Commits\n\n'
-git log --no-merges --reverse --format='- %s (%h)' "${previous:+$previous..}$tag"
+# Commits since the previous release. The first release has none to compare
+# against, and its whole history would only be noise.
 if [ -n "$previous" ]; then
+    printf '\n## Commits\n\n'
+    git log --no-merges --reverse --format='- %s (%h)' "$previous..$tag"
     printf '\nFull list of changes: %s/compare/%s...%s\n' "$repo_url" "$previous" "$tag"
 fi
