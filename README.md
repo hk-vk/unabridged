@@ -2,8 +2,10 @@
 
 **A better Audible client for the Mac.**
 
-Listening to Audible on a Mac has never felt like using a Mac app. Unabridged
-is a native, fast, good-looking app for the Audible library you already own. Sign in with your Audible account and you get your whole library,
+On a Mac, Audible's app is its iPhone and iPad app, installed from the App
+Store. It works, but it doesn't feel like a Mac app. Unabridged is a native,
+fast, good-looking Mac app for the Audible library you already own. Sign in
+with your Audible account and you get your whole library,
 offline downloads, a player built around chapters, a read-along transcript and
 a floating mini player, with your place kept in sync with your phone.
 
@@ -15,7 +17,7 @@ Unabridged is for **macOS** today. Other platforms are coming later.
 ## Why Unabridged
 
 - **It's a real Mac app.** Native windows, keyboard shortcuts, light and dark
-  mode, a mini player that floats above your work. No browser tab to keep open.
+  mode, a mini player that floats above your work. Not an iPad app in a window.
 - **It looks like your books.** Every book's player takes its colour from the
   cover, and progress shows right on the covers.
 - **It reads along with you.** An on-device transcript follows the narration
