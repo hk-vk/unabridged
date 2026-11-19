@@ -1,7 +1,9 @@
 //! Pure helpers over library data: progress, chapters, download stages, blurbs.
 
 /// Plain text from Audible's HTML blurbs: tags dropped, entities decoded,
-/// whitespace collapsed.
+/// whitespace collapsed. Only the tests use it now; blurbs go through
+/// `blurb_paragraphs`.
+#[cfg(test)]
 pub(crate) fn strip_html(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut in_tag = false;
@@ -257,7 +259,11 @@ mod blurb_tests {
                     <p>________</p><p>Extraordinary results &amp; agency.</p>";
         assert_eq!(
             blurb_paragraphs(html),
-            ["'A guide.' Charles Duhigg", "'Refreshing.' Ali Abdaal", "Extraordinary results & agency."]
+            [
+                "'A guide.' Charles Duhigg",
+                "'Refreshing.' Ali Abdaal",
+                "Extraordinary results & agency."
+            ]
         );
     }
 

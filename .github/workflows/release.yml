@@ -39,7 +39,9 @@ jobs:
       - name: Use Xcode 27.1
         run: sudo xcode-select -s /Applications/Xcode_27.1.app
 
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml picks the version; this installs it.
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
 
       - name: Check the version
         run: |

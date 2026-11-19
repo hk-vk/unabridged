@@ -118,7 +118,7 @@ those the download stops with an error explaining why.
 
 You need:
 
-- Rust 1.90 or later (`rustup`)
+- Rust via `rustup` (`rust-toolchain.toml` installs the pinned version)
 - Xcode 26 or later, for the read along helper (it builds against the macOS 26
   SDK)
 
@@ -150,7 +150,7 @@ builds come from `tools/build-release.sh`; see
 ## Credits
 
 - Built with [GPUI](https://github.com/zed-industries/zed), the UI framework
-  from Zed.
+  from Zed. Updates through [Sparkle](https://sparkle-project.org).
 - Sign-in and download protocol work follows
   [mkb79/audible](https://github.com/mkb79/Audible) and
   [Libation](https://github.com/rmcrackan/Libation).
@@ -166,5 +166,6 @@ Unabridged is licensed under either of
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
-at your option. Bundled fonts, icons and the vendored GPUI crate keep their own
-licenses, included next to them.
+at your option. Bundled fonts, icons, Sparkle and the vendored GPUI crate keep
+their own licenses; [THIRD-PARTY.md](THIRD-PARTY.md) lists them, along with
+the code derived from other projects.

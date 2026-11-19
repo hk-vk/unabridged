@@ -63,6 +63,8 @@ cp target/release/better-audible "$app/Contents/MacOS/better-audible"
 xcrun swiftc -O -target arm64-apple-macos26.0 crates/app/src/transcribe.swift \
     -o "$app/Contents/MacOS/ba-transcribe"
 cp assets/macos/AppIcon.icns assets/macos/AppIcon-light.icns "$app/Contents/Resources/"
+# Sparkle's MIT license travels with the framework (see THIRD-PARTY.md).
+cp target/sparkle/LICENSE "$app/Contents/Resources/Sparkle-LICENSE"
 
 sparkle="$app/Contents/Frameworks/Sparkle.framework"
 ditto target/sparkle/Sparkle.framework "$sparkle"
