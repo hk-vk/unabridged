@@ -3,8 +3,9 @@
 #
 # usage: tools/build-release.sh [signing identity]
 #
-# Uses "Better Audible Local Signing" (see tools/install-app.sh) when no
-# identity is given and it is in the keychain, otherwise signs ad hoc. The
+# Uses "Unabridged Signing" (the identity CI signs with, made once by
+# tools/release-setup.sh's steps) when no identity is given and it is in the
+# keychain, otherwise signs ad hoc. The
 # release bundle is named Unabridged with its own bundle identifier; the app's
 # data folders are the same as the local build's, so both see one library.
 set -eu
@@ -15,8 +16,8 @@ plist_tool=/usr/libexec/PlistBuddy
 
 if [ -n "${1:-}" ]; then
     identity=$1
-elif security find-certificate -c "Better Audible Local Signing" >/dev/null 2>&1; then
-    identity="Better Audible Local Signing"
+elif security find-certificate -c "Unabridged Signing" >/dev/null 2>&1; then
+    identity="Unabridged Signing"
 else
     identity=-
     echo "warning: signing ad hoc; updates will ask for permissions again" >&2

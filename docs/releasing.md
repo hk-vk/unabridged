@@ -7,8 +7,8 @@ the Homebrew cask in `hk-vk/homebrew-tap`. Installed copies read the feed from
 `https://github.com/hk-vk/unabridged/releases/latest/download/appcast.xml`, so
 there is no website to deploy.
 
-The app is signed with the self-signed "Better Audible Local Signing" identity
-and is not notarized. Homebrew clears the quarantine flag; people who download
+The app is signed with the self-signed "Unabridged Signing" identity (in the
+login keychain and in the `SIGNING_P12` secret) and is not notarized. Homebrew clears the quarantine flag; people who download
 the zip click Open Anyway once.
 
 ## One-time setup
@@ -18,17 +18,17 @@ the zip click Open Anyway once.
    writes the public half to `assets/macos/sparkle-public-key.txt`. Commit that
    file. Back up the private key: without it, installed copies can never update
    again.
-2. **Repository secrets.** Add the four secrets the script prints:
-   `SPARKLE_PRIVATE_KEY`, `SIGNING_P12`, `SIGNING_P12_PASSWORD` and
-   `TAP_DEPLOY_KEY`.
+2. **Repository secrets.** `SPARKLE_PRIVATE_KEY`, `SIGNING_P12`,
+   `SIGNING_P12_PASSWORD` and `TAP_DEPLOY_KEY` (a write deploy key on
+   hk-vk/homebrew-tap named "unabridged release workflow"). All four are set.
 3. **Test a local release build.** Run `tools/build-release.sh`, open
    `target/release-app/Unabridged.app` (quit the local build first, since they
    share the same sign-in and library), check that Settings → About shows
    Check for Updates…, and quit it.
-4. **Dry run in CI.** Create the tag locally and push only the tag's commit to
-   `main`, then run the Release workflow by hand (Actions → Release → Run
-   workflow) with that tag. It uploads the zip, notes and appcast as an artifact
-   and publishes nothing.
+4. **Dry run in CI.** Run the Release workflow by hand with the next version's
+   tag, unpushed (`gh workflow run release.yml -R hk-vk/unabridged -f
+   tag=v0.1.0`). It tags the run's commit itself, uploads the zip, notes and
+   appcast as an artifact and publishes nothing.
 5. **Make the repo public** when you're ready (`gh repo edit hk-vk/unabridged
    --visibility public --accept-visibility-change-consequences`). The update
    feed and Homebrew downloads only work once it is public.
@@ -65,5 +65,5 @@ sees a newer build.
     existing sign-in and downloads);
   - the crate and binary `better-audible`, and the local build from
     `tools/install-app.sh`;
-  - the signing identity name "Better Audible Local Signing" (changing it means
-    new permissions prompts for existing installs).
+  - the local build's signing identity "Better Audible Local Signing" (release
+    builds use "Unabridged Signing").

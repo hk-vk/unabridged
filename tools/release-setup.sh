@@ -28,15 +28,13 @@ or with the gh commands shown:
       target/sparkle/bin/generate_keys --account unabridged -x key.txt
       gh secret set SPARKLE_PRIVATE_KEY -R hk-vk/unabridged < key.txt && rm key.txt
 
-  SIGNING_P12, SIGNING_P12_PASSWORD   the "Better Audible Local Signing" identity
-      In Keychain Access > My Certificates, right-click
-      "Better Audible Local Signing" > Export, save identity.p12 with a password.
-      base64 -i identity.p12 | gh secret set SIGNING_P12 -R hk-vk/unabridged
-      gh secret set SIGNING_P12_PASSWORD -R hk-vk/unabridged   (type the password)
-      rm identity.p12
+  SIGNING_P12, SIGNING_P12_PASSWORD   the "Unabridged Signing" identity
+      A self-signed code-signing certificate (made with openssl, like
+      BadgeBar's create-signing-cert.sh), imported into the login keychain
+      for local release builds and uploaded as a base64 .p12 with its password.
 
-  TAP_DEPLOY_KEY   write access to hk-vk/homebrew-tap (the BadgeBar key works)
-      gh secret set TAP_DEPLOY_KEY -R hk-vk/unabridged < path/to/tap_deploy_key
+  TAP_DEPLOY_KEY   an SSH key added as a write deploy key on hk-vk/homebrew-tap
+      ("unabridged release workflow")
 
 Keep a copy of the private update key somewhere safe: without it, installed
 copies can never be updated again.

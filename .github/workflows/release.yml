@@ -3,8 +3,8 @@ name: Release
 # Pushing a tag like v0.1.0 builds and signs Unabridged.app, publishes a GitHub
 # release (zip, signed appcast.xml, notes from CHANGELOG.md) and points the
 # Homebrew cask at it. Installed copies find updates through
-# releases/latest/download/appcast.xml. Run it by hand with an existing tag for
-# a dry run: it builds and uploads the files as an artifact, publishing nothing.
+# releases/latest/download/appcast.xml. Run it by hand with a tag name for a
+# dry run: it builds and uploads the files as an artifact, publishing nothing.
 #
 # One-time setup: tools/release-setup.sh, then the secrets it lists.
 
@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag for the version and notes (a dry run, nothing is published)
+        description: Version tag such as v0.1.0 (a dry run, nothing is published; made locally if it doesn't exist)
         required: true
 
 permissions:
@@ -30,6 +30,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # A dry run can name a tag that isn't pushed yet, since pushing one publishes.
+      - name: Make the tag for a dry run
+        if: env.PUBLISH != 'true'
+        run: git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git tag "$TAG"
 
       - name: Use Xcode 27.1
         run: sudo xcode-select -s /Applications/Xcode_27.1.app
@@ -50,8 +55,8 @@ jobs:
       - name: Run the tests
         run: cargo test --workspace
 
-      # The same self-signed identity as local builds, so macOS keeps the app's
-      # permissions across updates.
+      # The same self-signed "Unabridged Signing" identity for every release, so
+      # macOS keeps the app's permissions across updates.
       - name: Import the signing identity
         env:
           P12: ${{ secrets.SIGNING_P12 }}
@@ -69,7 +74,7 @@ jobs:
           rm "$RUNNER_TEMP/signing.p12"
 
       - name: Build
-        run: tools/build-release.sh "Better Audible Local Signing"
+        run: tools/build-release.sh "Unabridged Signing"
 
       - name: Zip and write the release notes
         run: |
