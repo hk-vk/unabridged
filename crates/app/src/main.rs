@@ -376,6 +376,9 @@ fn reopen(cx: &mut gpui_kit::App) {
     cx.activate(true);
 }
 
+/// The project's home on GitHub.
+pub(crate) const REPOSITORY_URL: &str = "https://github.com/hk-vk/unabridged";
+
 /// Whether this build can update itself (a release build with Sparkle).
 pub(crate) static UPDATES_AVAILABLE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);

@@ -277,17 +277,30 @@ impl Shell {
                 .icon(Icon::Refresh)
                 .on_click(|_, _, _| crate::check_for_updates())
         }));
-        settings_section(
-            Icon::Settings,
-            "About",
-            setting_row(
-                format!("Unabridged {}", env!("CARGO_PKG_VERSION")),
-                caption.into(),
-                action,
-                &theme,
-            ),
-            cx,
-        )
+        let version_row = setting_row(
+            format!("Unabridged {}", env!("CARGO_PKG_VERSION")),
+            caption.into(),
+            action,
+            &theme,
+        );
+        // A standing invitation, never a prompt: it only shows here.
+        let star_row = setting_row(
+            "Enjoying Unabridged?".into(),
+            "A star on GitHub helps other Mac listeners find it.".into(),
+            Button::new("star-on-github")
+                .label("Star on GitHub")
+                .icon(Icon::External)
+                .on_click(|_, _, cx| cx.open_url(crate::REPOSITORY_URL)),
+            &theme,
+        );
+        let content = div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(version_row)
+            .child(div().h(px(1.)).bg(theme.colors.hairline))
+            .child(star_row);
+        settings_section(Icon::Settings, "About", content, cx)
     }
 
     fn storage_settings(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
