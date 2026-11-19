@@ -58,11 +58,10 @@ set_key SUScheduledCheckInterval 86400 integer
 set_key SUVerifyUpdateBeforeExtraction true bool
 
 cp target/release/better-audible "$app/Contents/MacOS/better-audible"
-if [ -f target/release/ba-transcribe ]; then
-    cp target/release/ba-transcribe "$app/Contents/MacOS/ba-transcribe"
-else
-    echo "warning: ba-transcribe was not built; read along will be unavailable" >&2
-fi
+# The read along helper, compiled here so a failure stops the release instead
+# of shipping without read along (crates/app/build.rs only warns).
+xcrun swiftc -O -target arm64-apple-macos26.0 crates/app/src/transcribe.swift \
+    -o "$app/Contents/MacOS/ba-transcribe"
 cp assets/macos/AppIcon.icns assets/macos/AppIcon-light.icns "$app/Contents/Resources/"
 
 sparkle="$app/Contents/Frameworks/Sparkle.framework"
@@ -73,9 +72,7 @@ sign() { codesign --force --options runtime --timestamp=none --sign "$identity" 
 sign "$sparkle/Versions/B/Autoupdate"
 sign "$sparkle/Versions/B/Updater.app"
 sign "$sparkle"
-if [ -f "$app/Contents/MacOS/ba-transcribe" ]; then
-    sign "$app/Contents/MacOS/ba-transcribe"
-fi
+sign "$app/Contents/MacOS/ba-transcribe"
 sign --entitlements assets/macos/Unabridged.entitlements "$app"
 codesign --verify --strict --deep "$app"
 echo "Built $app ($(lipo -archs "$app/Contents/MacOS/better-audible"), build $build)"
