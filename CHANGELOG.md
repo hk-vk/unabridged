@@ -1,0 +1,18 @@
+# Changelog
+
+What changed in each release of Unabridged. The release workflow copies a version's section into its GitHub release notes, so add one before tagging.
+
+## 0.1.0
+
+The first public release: a native Mac app for your Audible library.
+
+- **Your whole library, natively.** Library, In progress, On this Mac, Bookmarks, Authors, Series and Finished, with search across titles, authors and narrators.
+- **Progress you can see at a glance.** Progress bars on covers, a chapter bar for the book you're playing, and "Almost done" when a book is nearly finished.
+- **A player built around chapters.** Each book's player takes its colour from the cover. Skip 30 seconds, change speed from 0.75× to 2.5×, set a sleep timer for minutes or the end of the chapter, and add bookmarks.
+- **Read along.** An on-device transcript follows the narration; click a line to jump there, and change the text size with ⌘+ and ⌘−. Needs macOS 26.
+- **Mini player.** A small floating window that stays above your other apps.
+- **Pick up where you left off.** Your position syncs with Audible, so you can move between your Mac and your phone.
+- **Offline listening.** Download books to your Mac and play them without a connection.
+- **Explore.** Browse Audible's catalog and new releases.
+- **Looks right on your Mac.** Light, dark or automatic, five accent colours, and a light or dark app icon.
+- **Automatic updates.** Checks once a day; Settings → About has Check for Updates….
