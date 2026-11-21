@@ -2,6 +2,8 @@
 mod backend;
 mod books;
 mod browser_tab;
+#[cfg(target_os = "windows")]
+mod chrome;
 mod file_browser;
 mod library;
 mod malayalam;
@@ -352,7 +354,7 @@ fn open_main_window(cx: &mut gpui_kit::App) {
             show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
             focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
             titlebar: Some(TitlebarOptions {
-                appears_transparent: cfg!(target_os = "macos"),
+                appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
                 ..Default::default()
             }),
             ..Default::default()

@@ -2,7 +2,9 @@
 use super::*;
 
 /// Mini player window size, as in the design.
-pub(crate) const SIZE: (f32, f32) = (420., 132.);
+pub(crate) const SIZE: (f32, f32) = (420., 132. + TITLEBAR_HEIGHT);
+
+const TITLEBAR_HEIGHT: f32 = if cfg!(target_os = "windows") { 32. } else { 0. };
 
 pub(crate) struct MiniPlayer {
     shell: Entity<Shell>,
@@ -95,7 +97,10 @@ pub(crate) fn set_height(window: &mut Window, height: f32, duration: std::time::
     #[cfg(not(target_os = "macos"))]
     {
         let _ = duration;
-        window.resize(size(window.bounds().size.width, px(height)));
+        window.resize(size(
+            window.bounds().size.width,
+            px(height + TITLEBAR_HEIGHT),
+        ));
     }
 }
 
@@ -114,6 +119,20 @@ const TRANSPORT_HEIGHT: f32 = 57.;
 
 impl Render for MiniPlayer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.render_player(window, cx);
+        #[cfg(target_os = "windows")]
+        return crate::chrome::frame(content, window, cx, true);
+        #[cfg(not(target_os = "windows"))]
+        content
+    }
+}
+
+impl MiniPlayer {
+    fn render_player(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let shell = self.shell.read(cx);
         let Some(active) = &shell.player else {
             return div()

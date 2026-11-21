@@ -372,6 +372,20 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.render_frame(window, cx);
+        #[cfg(target_os = "windows")]
+        return crate::chrome::frame(content, window, cx, false);
+        #[cfg(not(target_os = "windows"))]
+        content
+    }
+}
+
+impl Shell {
+    fn render_frame(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         if self.page == Page::NowPlaying && self.player.is_some() {
             return self.player_view(window, cx);
         }
