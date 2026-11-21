@@ -18,7 +18,7 @@ impl Shell {
             return loading_placeholders("Loading bookmarks…", cx);
         }
         if self.bookmarks.is_empty() {
-            return base().child(heading("No bookmarks yet")).child(copy("Save a moment from the player and find it here. Bookmarks are stored on this Mac.".into())).into_any_element();
+            return base().child(heading("No bookmarks yet")).child(copy(device_copy("Save a moment from the player and find it here. Bookmarks are stored on this Mac."))).into_any_element();
         }
         div()
             .flex()
@@ -28,7 +28,7 @@ impl Shell {
                 div()
                     .type_style(ui::text::BODY)
                     .text_color(color)
-                    .child("Saved on this Mac"),
+                    .child(device_copy("Saved on this Mac")),
             )
             .children(self.bookmarks.iter().filter_map(|(asin, position)| {
                 let item = library.items.iter().find(|item| &item.asin == asin)?;
@@ -263,11 +263,11 @@ impl Shell {
                     _ => "Your library is empty",
                 }))
                 .child(copy(if self.page == Page::OnThisMac {
-                    "Download a title from your library to listen on this Mac.".into()
+                    device_copy("Download a title from your library to listen on this Mac.")
                 } else if self.page == Page::Search {
                     "Try a different title, author or narrator.".into()
                 } else if library.offline {
-                    "Showing the library saved on this Mac.".into()
+                    device_copy("Showing the library saved on this Mac.")
                 } else {
                     "Your Audible library has synced.".into()
                 }))
@@ -403,16 +403,16 @@ impl Shell {
                                 IconButton::new(format!("reveal-{asin}"), Icon::Folder, 16.)
                                     .hit_area(30.)
                                     .hover_fill(theme_fill)
-                                    .tooltip("Show in Finder")
+                                    .tooltip(crate::file_browser::SHOW_LABEL)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(path) = &local_path
-                                            && let Err(error) = std::process::Command::new("open")
-                                                .arg("-R")
-                                                .arg(path)
-                                                .spawn()
+                                            && let Err(error) =
+                                                crate::file_browser::open(path, true)
                                         {
-                                            this.download_notice =
-                                                Some(format!("Could not open Finder: {error}"));
+                                            this.download_notice = Some(format!(
+                                                "Could not open {}: {error}",
+                                                crate::file_browser::NAME
+                                            ));
                                             cx.notify();
                                         }
                                     })),
@@ -444,7 +444,7 @@ impl Shell {
                             .hit_area(30.)
                             .color(theme_ink)
                             .hover_fill(theme_fill)
-                            .tooltip("Download to this Mac")
+                            .tooltip(device_copy("Download to this Mac"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.download(key.clone(), asin.clone(), download_title.clone(), cx)
                             }))

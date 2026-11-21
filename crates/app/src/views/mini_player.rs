@@ -38,7 +38,32 @@ pub(crate) fn float_everywhere(window: &Window) {
             unsafe { ba_window_float_everywhere(appkit.ns_view.as_ptr()) }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        use ::windows::Win32::{
+            Foundation::HWND,
+            UI::WindowsAndMessaging::{
+                HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+            },
+        };
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = HasWindowHandle::window_handle(window)
+            && let RawWindowHandle::Win32(win32) = handle.as_raw()
+        {
+            let _ = unsafe {
+                SetWindowPos(
+                    HWND(win32.hwnd.get() as *mut _),
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+            };
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = window;
 }
 
@@ -46,7 +71,7 @@ pub(crate) fn float_everywhere(window: &Window) {
 pub(crate) const EXPANDED_HEIGHT: f32 = 470.;
 
 /// Resizes the mini player window, top edge fixed, on the sheet curve.
-pub(crate) fn set_height(window: &Window, height: f32, duration: std::time::Duration) {
+pub(crate) fn set_height(window: &mut Window, height: f32, duration: std::time::Duration) {
     #[cfg(target_os = "macos")]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -68,7 +93,10 @@ pub(crate) fn set_height(window: &Window, height: f32, duration: std::time::Dura
         }
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = (window, height, duration);
+    {
+        let _ = duration;
+        window.resize(size(window.bounds().size.width, px(height)));
+    }
 }
 
 fn lerp(from: f32, to: f32, t: f32) -> f32 {
@@ -86,6 +114,16 @@ const TRANSPORT_HEIGHT: f32 = 57.;
 
 impl Render for MiniPlayer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_player(window, cx)
+    }
+}
+
+impl MiniPlayer {
+    fn render_player(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let shell = self.shell.read(cx);
         let Some(active) = &shell.player else {
             return div()
@@ -171,6 +209,9 @@ impl Render for MiniPlayer {
         let toggle_shell = self.shell.clone();
         // Cover and titles double as the drag handle: the window has no title bar.
         let drag = |el: gpui_kit::Stateful<gpui_kit::Div>| {
+            #[cfg(target_os = "windows")]
+            return el.window_control_area(gpui_kit::WindowControlArea::Drag);
+            #[cfg(not(target_os = "windows"))]
             el.on_mouse_down(gpui_kit::MouseButton::Left, |_, window, _| {
                 window.start_window_move()
             })
@@ -209,12 +250,16 @@ impl Render for MiniPlayer {
             .overflow_hidden()
             .font_family(ui::typography::family::UI)
             .bg(background)
+            .when(cfg!(target_os = "windows"), |surface| {
+                surface.window_control_area(gpui_kit::WindowControlArea::Drag)
+            })
             .text_color(palette.on_field)
             .when_some(lyrics, |root, lyrics| {
                 root.child(
                     div()
                         .absolute()
                         .left(px(10.))
+                        .when(cfg!(target_os = "windows"), |lyrics| lyrics.occlude())
                         .right(px(10.))
                         .top(px(lyrics_top + (1. - lyrics_shown) * 10.))
                         .bottom(px(lyrics_bottom))
@@ -273,6 +318,7 @@ impl Render for MiniPlayer {
                             .flex()
                             .flex_none()
                             .items_center()
+                            .when(cfg!(target_os = "windows"), |controls| controls.occlude())
                             .child(
                                 IconButton::new("mini-read-along", Icon::Subtitle, 13.)
                                     .hit_area(22.)
@@ -324,6 +370,7 @@ impl Render for MiniPlayer {
                     .left(px(transport_left))
                     .right(px(transport_right))
                     .bottom(px(INSET))
+                    .when(cfg!(target_os = "windows"), |transport| transport.occlude())
                     .flex()
                     .flex_col()
                     .gap(px(11.))
@@ -459,5 +506,17 @@ impl Render for MiniPlayer {
                     ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_heights_match_the_surface_without_a_titlebar() {
+        assert_eq!(SIZE, (420., 132.));
+        assert_eq!(EXPANDED_HEIGHT, 470.);
+        assert_eq!(EXPANDED_HEIGHT - SIZE.1, 338.);
     }
 }

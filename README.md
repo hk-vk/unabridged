@@ -97,6 +97,20 @@ cargo run -p better-audible    # needs rustup and Xcode 26 or later
 
 Releases: [docs/releasing.md](docs/releasing.md).
 
+### Windows
+
+Windows 10 or 11, x64, can be built from source. Install [rustup](https://rustup.rs)
+and Visual Studio Build Tools with the C++ workload, then run:
+
+```sh
+cargo run -p better-audible
+```
+
+Sign in with Amazon in your browser. When the page says it can’t be found,
+press **Ctrl+L**, then **Ctrl+C** to copy its address. Unabridged picks it up
+and continues signing in. Read along and automatic updates are macOS-only
+for now.
+
 ## Acknowledgments
 
 - [mkb79/Audible](https://github.com/mkb79/Audible) and

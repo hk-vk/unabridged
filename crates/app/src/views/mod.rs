@@ -174,14 +174,14 @@ impl Shell {
         match &self.account {
             Account::Loading if self.connecting_after_sign_in => base()
                 .child(sign_in_steps(2, cx))
-                .child(intro("Connecting to Audible", "You’re signed in. Registering this Mac and loading your library; you can leave this window open."))
+                .child(intro("Connecting to Audible", if cfg!(target_os = "macos") { "You’re signed in. Registering this Mac and loading your library; you can leave this window open." } else { "You’re signed in. Registering this PC and loading your library; you can leave this window open." }))
                 .child(status("Loading your library…"))
                 .into_any_element(),
             Account::Loading => base().child(heading("Connecting to Audible"))
                 .child(loading_placeholders("Loading your library…", cx)).into_any_element(),
             Account::SignedOut => base()
                 .child(sign_in_steps(0, cx))
-                .child(intro("Your Audible library, here", "Choose your Audible store, then sign in with Amazon in your browser. Your device credentials are stored in your Mac’s Keychain."))
+                .child(intro("Your Audible library, here", if cfg!(target_os = "macos") { "Choose your Audible store, then sign in with Amazon in your browser. Your device credentials are stored in your Mac’s Keychain." } else { "Choose your Audible store, then sign in with Amazon in your browser. Your device credentials are stored in your private application data folder." }))
                 .child(div().flex().flex_col().gap(px(8.))
                     .child(div().flex().items_center().gap(px(12.))
                         .child(div().w(px(220.)).child(
@@ -193,7 +193,7 @@ impl Shell {
                                 .type_style(ui::text::BODY),
                         ))
                         .child(Button::new("sign-in").label("Sign in with Amazon").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.begin_sign_in(cx)))))
-                    .children(self.suggested_marketplace.map(|market| div().type_style(ui::text::CAPTION).text_color(color).child(format!("Suggested from your Mac’s region: {}. Choose the store where you bought your books.", market.display_name()))))
+                    .children(self.suggested_marketplace.map(|market| div().type_style(ui::text::CAPTION).text_color(color).child(format!("Suggested from your {} region: {}. Choose the store where you bought your books.", if cfg!(target_os = "macos") { "Mac’s" } else { "system’s" }, market.display_name()))))
                     .children(self.download_notice.iter().map(|message| div().type_style(ui::text::CAPTION).text_color(color).child(message.clone()))))
                 .into_any_element(),
             Account::SigningIn(_) => {
