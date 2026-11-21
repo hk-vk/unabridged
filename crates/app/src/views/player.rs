@@ -756,6 +756,7 @@ pub(crate) fn read_along_list(
         transcript::Phase::NeedsModel => {
             let entity = entity.clone();
             let language = transcript::speech_name(read.locale);
+            let whisper = transcript::engine(read.locale) == transcript::Engine::Whisper;
             return div()
                 .flex()
                 .flex_col()
@@ -764,14 +765,16 @@ pub(crate) fn read_along_list(
                     div()
                         .type_style(ui::text::BODY)
                         .text_color(palette.on_field_muted)
-                        .child(format!(
+                        .child(if whisper { format!(
+                            "Read along transcribes on this computer with an open speech model. It’s a one-time download of about {} MB. Nothing leaves your computer.", crate::whisper::MODEL_MB
+                        ) } else { format!(
                             "Read along uses your Mac’s built-in speech recognition. macOS needs to add {language} speech first. It’s a one-time download that macOS keeps. Nothing leaves your Mac."
-                        )),
+                        ) }),
                 )
                 .child(
                     div().flex().child(
                         Chip::new("download-speech-model")
-                            .label(format!("Add {language} speech"))
+                            .label(if whisper { format!("Download speech model ({} MB)", crate::whisper::MODEL_MB) } else { format!("Add {language} speech") })
                             .icon(Icon::Download, palette.on_field)
                             .height(ui::metrics::size::POPUP)
                             .style(ChipStyle::Outline {
@@ -795,11 +798,17 @@ pub(crate) fn read_along_list(
                     div()
                         .type_style(ui::text::CAPTION.tabular())
                         .text_color(palette.on_field_muted)
-                        .child(format!(
-                            "Adding {} speech… {:.0}%",
-                            transcript::speech_name(read.locale),
-                            progress * 100.
-                        )),
+                        .child(
+                            if transcript::engine(read.locale) == transcript::Engine::Whisper {
+                                format!("Downloading speech model… {:.0}%", progress * 100.)
+                            } else {
+                                format!(
+                                    "Adding {} speech… {:.0}%",
+                                    transcript::speech_name(read.locale),
+                                    progress * 100.
+                                )
+                            },
+                        ),
                 )
                 .child(
                     SegmentedProgress::new(0., *progress, 0.)
