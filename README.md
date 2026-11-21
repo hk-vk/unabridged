@@ -43,7 +43,9 @@ the app.
 cover. Chapters, speeds from 0.75× to 2.5×, a sleep timer and bookmarks.
 
 **Read along.** An on-device transcript follows the narration line by line.
-Click a line you missed to jump back to it. Needs macOS 26.
+Click a line you missed to jump back to it. Works on Mac and Windows with a
+one-time download of an open speech model (82 MB); macOS 26 uses Apple’s
+built-in speech recognition. Transcription stays on your computer.
 
 **A mini player that floats.** Keep listening in a small window above your other
 apps.

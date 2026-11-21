@@ -14,6 +14,16 @@ includes or builds on the following, each under its own license.
 | Geist Pixel | SIL OFL 1.1 | `assets/fonts/geist-pixel` |
 | [Hugeicons](https://hugeicons.com) free set | MIT | `assets/icons` |
 | Rust crates listed in `Cargo.lock` | Their own licenses, mostly MIT and/or Apache-2.0 | Compiled into the app |
+| [whisper-rs](https://codeberg.org/tazz4843/whisper-rs) / [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | Unlicense / MIT | Local speech inference |
+| [Symphonia](https://github.com/pdeljanov/Symphonia) | MPL-2.0 | Audiobook decoding |
+
+## Optional speech model
+
+Read along can download the multilingual Whisper base model, quantised as
+[`ggml-base-q8_0.bin`](https://huggingface.co/ggerganov/whisper.cpp/blob/main/ggml-base-q8_0.bin)
+(81,768,585 bytes), converted from [OpenAI Whisper](https://github.com/openai/whisper)
+(MIT). SHA-256: `c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9`.
+The model is downloaded only on request and can be removed in Settings.
 
 ## Code derived from other projects
 
