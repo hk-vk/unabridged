@@ -7,9 +7,9 @@ use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use symphonia::core::{
     audio::SampleBuffer,
-    codecs::DecoderOptions,
+    codecs::{CODEC_TYPE_NULL, DecoderOptions},
     errors::Error,
-    formats::{FormatOptions, SeekMode, SeekTo},
+    formats::{FormatOptions, SeekMode, SeekTo, Track},
     io::MediaSourceStream,
     meta::MetadataOptions,
     probe::Hint,
@@ -175,6 +175,16 @@ fn absolute_line(offset: f64, start: i64, end: i64, limit: f64, text: String) ->
     }
 }
 
+fn audio_track(tracks: &[Track]) -> Result<&Track> {
+    tracks
+        .iter()
+        .find(|track| {
+            track.codec_params.codec != CODEC_TYPE_NULL
+                && track.codec_params.sample_rate.is_some_and(|rate| rate > 0)
+        })
+        .context("No audio track")
+}
+
 /// Decode and transcribe a range, streaming absolute-time segments after each window.
 pub fn transcribe(
     path: &Path,
@@ -201,7 +211,7 @@ pub fn transcribe(
             &MetadataOptions::default(),
         )?
         .format;
-    let track = format.default_track().context("No audio track")?;
+    let track = audio_track(format.tracks())?;
     let track_id = track.id;
     let rate = track
         .codec_params
@@ -308,6 +318,22 @@ pub fn transcribe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selects_audio_after_chapter_tracks() {
+        use symphonia::core::codecs::{CODEC_TYPE_AAC, CodecParameters};
+        let mut audio = CodecParameters::new();
+        audio.codec = CODEC_TYPE_AAC;
+        audio.sample_rate = Some(44_100);
+        let tracks = [
+            Track::new(1, CodecParameters::new()),
+            Track::new(2, audio.clone()),
+        ];
+        assert_eq!(audio_track(&tracks).unwrap().id, 2);
+        assert!(audio_track(&[]).is_err());
+        assert!(audio_track(&tracks[..1]).is_err());
+        audio.sample_rate = Some(0);
+        assert!(audio_track(&[Track::new(3, audio)]).is_err());
+    }
     #[test]
     fn locales() {
         assert_eq!(language("en-US").unwrap(), "en");
