@@ -2,9 +2,7 @@
 use super::*;
 
 /// Mini player window size, as in the design.
-pub(crate) const SIZE: (f32, f32) = (420., 132. + TITLEBAR_HEIGHT);
-
-const TITLEBAR_HEIGHT: f32 = if cfg!(target_os = "windows") { 32. } else { 0. };
+pub(crate) const SIZE: (f32, f32) = (420., 132.);
 
 pub(crate) struct MiniPlayer {
     shell: Entity<Shell>,
@@ -70,7 +68,7 @@ pub(crate) fn float_everywhere(window: &Window) {
 }
 
 /// The mini player's height when it is open on read along.
-pub(crate) const EXPANDED_HEIGHT: f32 = 470. + TITLEBAR_HEIGHT;
+pub(crate) const EXPANDED_HEIGHT: f32 = 470.;
 
 /// Resizes the mini player window, top edge fixed, on the sheet curve.
 pub(crate) fn set_height(window: &mut Window, height: f32, duration: std::time::Duration) {
@@ -116,11 +114,7 @@ const TRANSPORT_HEIGHT: f32 = 57.;
 
 impl Render for MiniPlayer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = self.render_player(window, cx);
-        #[cfg(target_os = "windows")]
-        return crate::chrome::frame(content, window, cx, true);
-        #[cfg(not(target_os = "windows"))]
-        content
+        self.render_player(window, cx)
     }
 }
 
@@ -215,6 +209,9 @@ impl MiniPlayer {
         let toggle_shell = self.shell.clone();
         // Cover and titles double as the drag handle: the window has no title bar.
         let drag = |el: gpui_kit::Stateful<gpui_kit::Div>| {
+            #[cfg(target_os = "windows")]
+            return el.window_control_area(gpui_kit::WindowControlArea::Drag);
+            #[cfg(not(target_os = "windows"))]
             el.on_mouse_down(gpui_kit::MouseButton::Left, |_, window, _| {
                 window.start_window_move()
             })
@@ -253,12 +250,16 @@ impl MiniPlayer {
             .overflow_hidden()
             .font_family(ui::typography::family::UI)
             .bg(background)
+            .when(cfg!(target_os = "windows"), |surface| {
+                surface.window_control_area(gpui_kit::WindowControlArea::Drag)
+            })
             .text_color(palette.on_field)
             .when_some(lyrics, |root, lyrics| {
                 root.child(
                     div()
                         .absolute()
                         .left(px(10.))
+                        .when(cfg!(target_os = "windows"), |lyrics| lyrics.occlude())
                         .right(px(10.))
                         .top(px(lyrics_top + (1. - lyrics_shown) * 10.))
                         .bottom(px(lyrics_bottom))
@@ -317,6 +318,7 @@ impl MiniPlayer {
                             .flex()
                             .flex_none()
                             .items_center()
+                            .when(cfg!(target_os = "windows"), |controls| controls.occlude())
                             .child(
                                 IconButton::new("mini-read-along", Icon::Subtitle, 13.)
                                     .hit_area(22.)
@@ -368,6 +370,7 @@ impl MiniPlayer {
                     .left(px(transport_left))
                     .right(px(transport_right))
                     .bottom(px(INSET))
+                    .when(cfg!(target_os = "windows"), |transport| transport.occlude())
                     .flex()
                     .flex_col()
                     .gap(px(11.))
@@ -511,10 +514,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn window_heights_include_the_titlebar_once() {
-        let titlebar = if cfg!(target_os = "windows") { 32. } else { 0. };
-        assert_eq!(SIZE, (420., 132. + titlebar));
-        assert_eq!(EXPANDED_HEIGHT, 470. + titlebar);
+    fn window_heights_match_the_surface_without_a_titlebar() {
+        assert_eq!(SIZE, (420., 132.));
+        assert_eq!(EXPANDED_HEIGHT, 470.);
         assert_eq!(EXPANDED_HEIGHT - SIZE.1, 338.);
     }
 }

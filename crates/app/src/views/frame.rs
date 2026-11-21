@@ -347,7 +347,25 @@ impl Shell {
             .flex()
             .flex_col()
             .px(px(12.))
-            .pt(px(if cfg!(target_os = "macos") { 58. } else { 16. }))
+            .pt(px(if cfg!(target_os = "macos") {
+                58.
+            } else if cfg!(target_os = "windows") {
+                52.
+            } else {
+                16.
+            }))
+            .relative()
+            .when(cfg!(target_os = "windows"), |sidebar| {
+                sidebar.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(52.))
+                        .window_control_area(gpui_kit::WindowControlArea::Drag),
+                )
+            })
             .border_r_1()
             .border_color(theme.colors.hairline)
             .bg(theme.colors.sidebar)
@@ -374,7 +392,20 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = self.render_frame(window, cx);
         #[cfg(target_os = "windows")]
-        return crate::chrome::frame(content, window, cx, false);
+        {
+            let ink = if self.page == Page::NowPlaying {
+                cx.theme()
+                    .book_palette(
+                        self.player
+                            .as_ref()
+                            .and_then(|active| self.palettes.get(&active.asin).copied()),
+                    )
+                    .on_field
+            } else {
+                cx.theme().colors.ink
+            };
+            crate::chrome::frame(content, window, cx, ink)
+        }
         #[cfg(not(target_os = "windows"))]
         content
     }
@@ -450,27 +481,46 @@ impl Shell {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(Toolbar::new(title).trailing(
-                        if matches!(self.page, Page::Explore | Page::CatalogBook) {
-                            SearchField::new(
-                                &self.search,
-                                if cfg!(target_os = "macos") {
-                                    "⌘F"
-                                } else {
-                                    "Ctrl+F"
-                                },
-                            )
-                        } else {
-                            SearchField::new(
-                                &self.library_search,
-                                if cfg!(target_os = "macos") {
-                                    "⌘F"
-                                } else {
-                                    "Ctrl+F"
-                                },
-                            )
-                        },
-                    ))
+                    .child(
+                        div()
+                            .when(cfg!(target_os = "windows"), |header| {
+                                header
+                                    .pr(px(138.))
+                                    .window_control_area(gpui_kit::WindowControlArea::Drag)
+                            })
+                            .child(
+                                Toolbar::new(title).trailing(
+                                    div()
+                                        .when(cfg!(target_os = "windows"), |search| {
+                                            search.occlude()
+                                        })
+                                        .child(
+                                            if matches!(
+                                                self.page,
+                                                Page::Explore | Page::CatalogBook
+                                            ) {
+                                                SearchField::new(
+                                                    &self.search,
+                                                    if cfg!(target_os = "macos") {
+                                                        "⌘F"
+                                                    } else {
+                                                        "Ctrl+F"
+                                                    },
+                                                )
+                                            } else {
+                                                SearchField::new(
+                                                    &self.library_search,
+                                                    if cfg!(target_os = "macos") {
+                                                        "⌘F"
+                                                    } else {
+                                                        "Ctrl+F"
+                                                    },
+                                                )
+                                            },
+                                        ),
+                                ),
+                            ),
+                    )
                     .children(download_panel)
                     .children(notice)
                     .child(
