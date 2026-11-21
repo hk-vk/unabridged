@@ -228,6 +228,8 @@ impl Shell {
                         this.speech_model_busy = false;
                         if let Err(error) = result {
                             this.download_notice = Some(error.to_string());
+                        } else {
+                            this.retry_read_along(cx);
                         }
                         cx.notify();
                     });
