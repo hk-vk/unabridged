@@ -1,7 +1,8 @@
 //! Downloadable, local Whisper transcription for machines without Apple SpeechAnalyzer.
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -30,6 +31,55 @@ pub const MODEL_SHA256: &str = "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf
 pub const MODEL_MB: u64 = MODEL_SIZE.div_ceil(1_000_000);
 static CONTEXT: Mutex<Option<WhisperContext>> = Mutex::new(None);
 static MODEL_IO: Mutex<()> = Mutex::new(());
+static FOREGROUND_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+struct Request<'a> {
+    foreground: &'a AtomicUsize,
+    prefetch: bool,
+}
+
+impl<'a> Request<'a> {
+    fn new(foreground: &'a AtomicUsize, prefetch: bool) -> Self {
+        if !prefetch {
+            foreground.fetch_add(1, Ordering::SeqCst);
+        }
+        Self {
+            foreground,
+            prefetch,
+        }
+    }
+
+    fn check(&self) -> Result<()> {
+        ensure!(
+            !self.prefetch || self.foreground.load(Ordering::SeqCst) == 0,
+            "Speech prefetch interrupted by foreground transcription"
+        );
+        Ok(())
+    }
+
+    fn lock<'b, T>(&self, context: &'b Mutex<T>) -> Result<MutexGuard<'b, T>> {
+        self.check()?;
+        let guard = if self.prefetch {
+            context
+                .try_lock()
+                .map_err(|_| anyhow::anyhow!("Speech engine busy"))?
+        } else {
+            context
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Speech engine lock failed"))?
+        };
+        self.check()?;
+        Ok(guard)
+    }
+}
+
+impl Drop for Request<'_> {
+    fn drop(&mut self) {
+        if !self.prefetch {
+            self.foreground.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
 
 /// Whether the optional local model is installed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,8 +244,27 @@ pub fn transcribe(
     from: f64,
     to: f64,
     locale: &str,
-    mut on_line: impl FnMut(Line),
+    on_line: impl FnMut(Line),
 ) -> Result<Vec<Line>> {
+    let request = Request::new(&FOREGROUND_REQUESTS, false);
+    transcribe_with_request(path, from, to, locale, on_line, &request)
+}
+
+/// Prefetch only while the engine is idle, yielding between windows to live read along.
+pub fn prefetch(path: &Path, from: f64, to: f64, locale: &str) -> Result<Vec<Line>> {
+    let request = Request::new(&FOREGROUND_REQUESTS, true);
+    transcribe_with_request(path, from, to, locale, |_| {}, &request)
+}
+
+fn transcribe_with_request(
+    path: &Path,
+    from: f64,
+    to: f64,
+    locale: &str,
+    mut on_line: impl FnMut(Line),
+    request: &Request<'_>,
+) -> Result<Vec<Line>> {
+    request.check()?;
     ensure!(
         from.is_finite() && to.is_finite() && from >= 0. && to > from,
         "Invalid transcription range"
@@ -232,9 +301,7 @@ pub fn transcribe(
         },
     )?;
     decoder.reset();
-    let mut context = CONTEXT
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Speech engine lock failed"))?;
+    let mut context = request.lock(&CONTEXT)?;
     if context.is_none() {
         let path = model_path()?;
         *context = Some(WhisperContext::new_with_params(
@@ -253,6 +320,7 @@ pub fn transcribe(
     let mut offset = from;
     let window = rate as usize * 30;
     let mut infer = |audio: &[f32], offset: f64| -> Result<()> {
+        request.check()?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some(&language));
         params.set_n_threads(threads);
@@ -277,6 +345,7 @@ pub fn transcribe(
         Ok(())
     };
     loop {
+        request.check()?;
         let packet = match format.next_packet() {
             Ok(packet) => packet,
             Err(Error::IoError(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -321,6 +390,57 @@ pub fn transcribe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefetch_runs_only_when_idle() {
+        let foreground = AtomicUsize::new(0);
+        let context = Mutex::new(());
+        let prefetch = Request::new(&foreground, true);
+        assert!(prefetch.check().is_ok());
+        drop(prefetch.lock(&context).unwrap());
+
+        let guard = context.lock().unwrap();
+        assert!(prefetch.lock(&context).is_err());
+        drop(guard);
+
+        let first = Request::new(&foreground, false);
+        let second = Request::new(&foreground, false);
+        assert!(prefetch.lock(&context).is_err());
+        assert!(first.lock(&context).is_ok());
+        drop(first);
+        assert!(prefetch.check().is_err());
+        drop(second);
+        assert!(prefetch.lock(&context).is_ok());
+    }
+
+    #[test]
+    fn prefetch_yields_at_next_window_to_waiting_foreground() {
+        let foreground = AtomicUsize::new(0);
+        let context = Mutex::new(());
+        let prefetch = Request::new(&foreground, true);
+        std::thread::scope(|scope| {
+            let guard = prefetch.lock(&context).unwrap();
+            let (started, waiting) = std::sync::mpsc::channel();
+            let foreground = &foreground;
+            let context = &context;
+            let worker = scope.spawn(move || {
+                let request = Request::new(foreground, false);
+                started.send(()).unwrap();
+                let _guard = request.lock(context).unwrap();
+                assert!(request.check().is_ok());
+            });
+            waiting.recv().unwrap();
+            let next_window = (|| -> Result<()> {
+                let _guard = guard;
+                prefetch.check()?;
+                panic!("Prefetch must not start another window");
+            })();
+            assert!(next_window.is_err());
+            worker.join().unwrap();
+        });
+        assert_eq!(foreground.load(Ordering::SeqCst), 0);
+    }
+
     #[test]
     fn selects_audio_after_chapter_tracks() {
         use symphonia::core::codecs::{CODEC_TYPE_AAC, CodecParameters};

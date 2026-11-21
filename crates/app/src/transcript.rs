@@ -466,7 +466,12 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
 fn prefetch(span: Span) {
     if cached(&span.key, &span.asin, span.locale, span.start_ms()).is_none()
         && model_status(span.locale) == Ok(true)
-        && let Ok(lines) = transcribe(&span, span.start, span.end, |_| {})
+        && let Ok(lines) = if engine(span.locale) == Engine::Whisper {
+            crate::whisper::prefetch(&span.audio, span.start, span.end, span.locale)
+                .map_err(|error| error.to_string())
+        } else {
+            transcribe(&span, span.start, span.end, |_| {})
+        }
     {
         store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
     }
