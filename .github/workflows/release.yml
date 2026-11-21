@@ -149,6 +149,7 @@ jobs:
   windows:
     runs-on: windows-latest
     needs: release
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success') }}
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
       PUBLISH: ${{ github.event_name == 'push' }}
@@ -162,6 +163,16 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Check Whisper build prerequisites
+        shell: pwsh
+        run: |
+          cmake --version
+          $clang = 'C:\Program Files\LLVM\bin'
+          if (!(Test-Path "$clang\libclang.dll")) {
+            throw 'The Windows runner must provide LLVM with libclang.dll'
+          }
+          "LIBCLANG_PATH=$clang" >> $env:GITHUB_ENV
 
       - name: Build
         run: cargo build --release -p better-audible

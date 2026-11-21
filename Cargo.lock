@@ -618,8 +618,8 @@ dependencies = [
  "symphonia",
  "tokio",
  "ui",
- "windows 0.61.3",
  "whisper-rs",
+ "windows 0.61.3",
 ]
 
 [[package]]
