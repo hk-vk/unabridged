@@ -126,13 +126,16 @@ pub fn remove() -> Result<()> {
 
 /// Convert a BCP-47 locale to a language supported by Whisper.
 pub fn language(locale: &str) -> Result<String> {
-    let code = locale
+    let mut code = locale
         .split(['-', '_'])
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
+    if code == "yue" {
+        code = "zh".into();
+    }
     ensure!(
-        whisper_rs::get_lang_id(&code).is_some(),
+        whisper_rs::get_lang_id(&code).is_some_and(|id| id < 99),
         "Whisper does not support language {locale}"
     );
     Ok(code)
@@ -338,6 +341,8 @@ mod tests {
     fn locales() {
         assert_eq!(language("en-US").unwrap(), "en");
         assert_eq!(language("zh_TW").unwrap(), "zh");
+        assert_eq!(language("yue-CN").unwrap(), "zh");
+        assert_eq!(language("YUE-HK").unwrap(), "zh");
         assert!(language("").is_err());
         assert!(language("not-a-language").is_err());
     }

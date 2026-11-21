@@ -253,8 +253,11 @@ fn cache_path(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<Path
     Some(
         transcripts_directory(key)?
             .join(match engine(locale) {
-                Engine::Apple => "apple",
-                Engine::Whisper => "whisper-base-q8_0",
+                Engine::Apple => "apple".into(),
+                Engine::Whisper => format!(
+                    "whisper-base-q8_0-{}",
+                    crate::whisper::language(locale).ok()?
+                ),
             })
             .join(asin)
             .join(locale)
