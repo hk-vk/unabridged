@@ -88,9 +88,9 @@ mod platform {
         Storage::StorageFile,
         Win32::{
             Foundation::RPC_E_CHANGED_MODE,
-            System::WinRT::{RO_INIT_SINGLETHREADED, RoInitialize, RoUninitialize},
-            UI::WindowsAndMessaging::{
-                DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+            System::WinRT::{
+                RO_INIT_MULTITHREADED, RO_INIT_SINGLETHREADED, RO_INIT_TYPE, RoInitialize,
+                RoUninitialize,
             },
         },
         core::HSTRING,
@@ -98,8 +98,8 @@ mod platform {
 
     struct Apartment(bool);
     impl Apartment {
-        fn new() -> windows::core::Result<Self> {
-            match unsafe { RoInitialize(RO_INIT_SINGLETHREADED) } {
+        fn new(mode: RO_INIT_TYPE) -> windows::core::Result<Self> {
+            match unsafe { RoInitialize(mode) } {
                 Ok(()) => Ok(Self(true)),
                 Err(error) if error.code() == RPC_E_CHANGED_MODE => Ok(Self(false)),
                 Err(error) => Err(error),
@@ -114,7 +114,7 @@ mod platform {
         }
     }
     thread_local! {
-        static APARTMENT: windows::core::Result<Apartment> = Apartment::new();
+        static APARTMENT: windows::core::Result<Apartment> = Apartment::new(RO_INIT_SINGLETHREADED);
     }
     pub struct Player(MediaPlayer, std::marker::PhantomData<std::rc::Rc<()>>);
 
@@ -122,6 +122,15 @@ mod platform {
         pub fn open(path: &Path) -> anyhow::Result<Self> {
             APARTMENT.with(|apartment| apartment.as_ref().map(|_| ()).map_err(Clone::clone))?;
             let path = dunce::canonicalize(path)?;
+            // Create the agile player without a UI dispatcher so opening cannot re-enter GPUI.
+            let player = std::thread::spawn(move || Self::open_media(&path))
+                .join()
+                .map_err(|_| anyhow::anyhow!("Audio opening thread panicked"))??;
+            Ok(Self(player, std::marker::PhantomData))
+        }
+
+        fn open_media(path: &Path) -> anyhow::Result<MediaPlayer> {
+            let _apartment = Apartment::new(RO_INIT_MULTITHREADED)?;
             let file =
                 StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str()))?.get()?;
             let source = MediaSource::CreateFromStorageFile(&file)?;
@@ -156,25 +165,7 @@ mod platform {
             }))?;
             let result = (|| -> anyhow::Result<()> {
                 player.SetSource(&source)?;
-                let deadline = std::time::Instant::now() + Duration::from_secs(10);
-                loop {
-                    match receiver.recv_timeout(Duration::from_millis(10)) {
-                        Ok(result) => break result,
-                        Err(mpsc::RecvTimeoutError::Timeout)
-                            if std::time::Instant::now() < deadline =>
-                        {
-                            let mut message = MSG::default();
-                            // The UI apartment must dispatch messages while media opens.
-                            unsafe {
-                                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-                                    let _ = TranslateMessage(&message);
-                                    DispatchMessageW(&message);
-                                }
-                            }
-                        }
-                        Err(error) => break Err(error.into()),
-                    }
-                }
+                receiver.recv_timeout(Duration::from_secs(10))?
             })();
             let _ = player.RemoveMediaOpened(opened);
             let _ = player.RemoveMediaFailed(failed);
@@ -182,7 +173,7 @@ mod platform {
                 let _ = player.Close();
                 return Err(error);
             }
-            Ok(Self(player, std::marker::PhantomData))
+            Ok(player)
         }
         pub fn play(&self) -> anyhow::Result<()> {
             Ok(self.0.Play()?)
