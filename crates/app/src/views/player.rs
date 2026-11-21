@@ -120,6 +120,11 @@ impl Shell {
                     .items_center()
                     .pl(px(84.))
                     .pr(px(20.))
+                    .when(cfg!(target_os = "windows"), |header| {
+                        header
+                            .pr(px(158.))
+                            .window_control_area(gpui_kit::WindowControlArea::Drag)
+                    })
                     .gap(px(10.))
                     .children(timeline.chapter.as_ref().map(|(index, name)| {
                         let total = active.chapters.len();
@@ -168,6 +173,7 @@ impl Shell {
                             .child(
                                 div()
                                     .max_w(px(if compact { 260. } else { 420. }))
+                                    .when(cfg!(target_os = "windows"), |picker| picker.occlude())
                                     .flex()
                                     .child(self.chapter_picker(
                                         "current-chapter-menu",
@@ -179,18 +185,28 @@ impl Shell {
                             )
                     }))
                     .child(
-                        BackLink::new("player-back", self.back_label())
-                            .color(palette.on_field_muted)
-                            .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                        div()
+                            .when(cfg!(target_os = "windows"), |back| back.occlude())
+                            .child(
+                                BackLink::new("player-back", self.back_label())
+                                    .color(palette.on_field_muted)
+                                    .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                            ),
                     )
                     .child(div().flex_1().min_w_0())
                     .child(
-                        IconButton::new("open-mini", Icon::Pip, 17.)
-                            .hit_area(28.)
-                            .color(palette.on_field_muted)
-                            .hover_fill(palette.on_field_track)
-                            .tooltip("Open mini player")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
+                        div()
+                            .when(cfg!(target_os = "windows"), |mini| mini.occlude())
+                            .child(
+                                IconButton::new("open-mini", Icon::Pip, 17.)
+                                    .hit_area(28.)
+                                    .color(palette.on_field_muted)
+                                    .hover_fill(palette.on_field_track)
+                                    .tooltip("Open mini player")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.open_mini_player(cx)),
+                                    ),
+                            ),
                     ),
             )
             .children(self.download_notice.as_ref().map(|message| {

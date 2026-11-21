@@ -1,23 +1,31 @@
 use crate::*;
 use gpui_kit::WindowControlArea;
 
-pub(crate) const HEIGHT: f32 = 32.;
-
 pub(crate) fn frame(
     content: gpui_kit::AnyElement,
     window: &Window,
     cx: &gpui_kit::App,
-    mini: bool,
+    ink: gpui_kit::Hsla,
 ) -> gpui_kit::AnyElement {
+    static FONT: std::sync::OnceLock<Option<&str>> = std::sync::OnceLock::new();
+    let font = *FONT.get_or_init(|| {
+        let fonts = cx.text_system().all_font_names();
+        ["Segoe Fluent Icons", "Segoe MDL2 Assets"]
+            .into_iter()
+            .find(|candidate| fonts.iter().any(|name| name == candidate))
+    });
     let colors = cx.theme().colors;
-    let control = |id, label, area| {
+    let control = |id, glyph, fallback, area| {
         div()
             .id(id)
             .w(px(46.))
-            .h(px(HEIGHT))
+            .h(px(32.))
             .flex()
             .items_center()
             .justify_center()
+            .text_color(ink)
+            .text_size(px(if font.is_some() { 10. } else { 16. }))
+            .font_family(font.unwrap_or(ui::typography::family::UI))
             .window_control_area(area)
             .hover(move |style| {
                 if area == WindowControlArea::Close {
@@ -28,40 +36,41 @@ pub(crate) fn frame(
                     style.bg(colors.fill)
                 }
             })
-            .child(label)
+            .child(if font.is_some() { glyph } else { fallback })
     };
     div()
         .size_full()
-        .flex()
-        .flex_col()
-        .bg(colors.window)
-        .text_color(colors.ink)
-        .font_family(ui::typography::family::UI)
+        .relative()
+        .child(content)
         .child(
             div()
-                .h(px(HEIGHT))
-                .flex_none()
+                .absolute()
+                .top_0()
+                .right_0()
                 .flex()
-                .child(
-                    div()
-                        .flex_1()
-                        .h_full()
-                        .pl(px(12.))
-                        .flex()
-                        .items_center()
-                        .window_control_area(WindowControlArea::Drag)
-                        .child("Unabridged"),
-                )
-                .when(!mini, |bar| {
-                    bar.child(control("window-minimize", "−", WindowControlArea::Min))
-                        .child(control(
-                            "window-maximize",
-                            if window.is_maximized() { "❐" } else { "□" },
-                            WindowControlArea::Max,
-                        ))
-                })
-                .child(control("window-close", "×", WindowControlArea::Close)),
+                .occlude()
+                .child(control(
+                    "window-minimize",
+                    "\u{e921}",
+                    "−",
+                    WindowControlArea::Min,
+                ))
+                .child(control(
+                    "window-maximize",
+                    if window.is_maximized() {
+                        "\u{e923}"
+                    } else {
+                        "\u{e922}"
+                    },
+                    if window.is_maximized() { "❐" } else { "□" },
+                    WindowControlArea::Max,
+                ))
+                .child(control(
+                    "window-close",
+                    "\u{e8bb}",
+                    "×",
+                    WindowControlArea::Close,
+                )),
         )
-        .child(div().flex_1().min_h_0().w_full().child(content))
         .into_any_element()
 }
