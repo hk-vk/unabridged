@@ -1,9 +1,7 @@
 //! Read along: on-device transcripts of the playing chapter.
 //!
-//! Transcription runs in the `ba-transcribe` helper (Apple's SpeechAnalyzer,
-//! macOS 26+), which sits next to the app binary. Finished chapters are cached
-//! per account under `Transcripts/<asin>/<start-ms>.json`, so each chapter is
-//! transcribed once.
+//! Uses Apple's SpeechAnalyzer helper on macOS 26+, or a downloaded Whisper
+//! model elsewhere. Finished chapters are cached per account and engine.
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -22,7 +20,7 @@ pub struct Line {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Phase {
     Checking,
-    /// macOS must add this language's speech files first.
+    /// The selected engine needs a one-time model download.
     NeedsModel,
     Downloading(f32),
     Transcribing,
@@ -49,6 +47,43 @@ fn helper() -> Option<PathBuf> {
 }
 
 const UNSUPPORTED: &str = "Read along needs macOS 26 or later.";
+
+/// The on-device engine selected for a language.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    /// Apple's SpeechAnalyzer helper.
+    Apple,
+    /// Downloadable open Whisper model.
+    Whisper,
+}
+
+/// Prefer Apple's installed helper, falling back only when unavailable or unsupported.
+pub fn engine(locale: &str) -> Engine {
+    static ENGINES: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Engine>>> =
+        std::sync::OnceLock::new();
+    let engines = ENGINES.get_or_init(Mutex::default);
+    if let Ok(engines) = engines.lock()
+        && let Some(engine) = engines.get(locale)
+    {
+        return *engine;
+    }
+    if helper().is_none() {
+        return Engine::Whisper;
+    }
+    let mut unsupported = false;
+    let result = run(&["status", locale], |value| {
+        unsupported = value["status"].as_str() == Some("unsupported");
+    });
+    let engine = if unsupported || result.as_ref().is_err_and(|error| error == UNSUPPORTED) {
+        Engine::Whisper
+    } else {
+        Engine::Apple
+    };
+    if let Ok(mut engines) = engines.lock() {
+        engines.insert(locale.into(), engine);
+    }
+    engine
+}
 
 /// Runs the helper and hands each JSON line to `on_line`. A `{"error": …}`
 /// line becomes the returned error.
@@ -217,6 +252,10 @@ pub fn unavailable(message: String) -> SharedJob {
 fn cache_path(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<PathBuf> {
     Some(
         transcripts_directory(key)?
+            .join(match engine(locale) {
+                Engine::Apple => "apple",
+                Engine::Whisper => "whisper-base-q8_0",
+            })
             .join(asin)
             .join(locale)
             .join(format!("{start_ms}.json")),
@@ -246,7 +285,16 @@ fn cached(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<Vec<Line
         serde_json::from_slice(&std::fs::read(path).ok()?).ok()
     };
     read(cache_path(key, asin, locale, start_ms)?).or_else(|| {
-        (locale == "en-US")
+        if engine(locale) == Engine::Apple {
+            let path = transcripts_directory(key)?
+                .join(asin)
+                .join(locale)
+                .join(format!("{start_ms}.json"));
+            if let Some(lines) = read(path) {
+                return Some(lines);
+            }
+        }
+        (locale == "en-US" && engine(locale) == Engine::Apple)
             .then(|| legacy_cache_path(key, asin, start_ms))
             .flatten()
             .and_then(read)
@@ -295,6 +343,10 @@ fn transcribe(
     to: f64,
     mut on_line: impl FnMut(Line),
 ) -> Result<Vec<Line>, String> {
+    if engine(span.locale) == Engine::Whisper {
+        return crate::whisper::transcribe(&span.audio, from, to, span.locale, on_line)
+            .map_err(|error| error.to_string());
+    }
     let mut lines = Vec::new();
     let audio = span.audio.to_string_lossy().to_string();
     let (start, end) = (format!("{from:.3}"), format!("{to:.3}"));
@@ -332,7 +384,7 @@ fn split_point(span: &Span, playhead: f64) -> f64 {
 /// Apple's Malayalam model writes Manglish, so it goes back into Malayalam
 /// script here (and improving the conversion never needs a re-transcribe).
 fn for_display(locale: &str, mut line: Line) -> Line {
-    if locale == "ml-IN" {
+    if locale == "ml-IN" && engine(locale) == Engine::Apple {
         line.text = crate::malayalam::from_manglish(&line.text);
     }
     line
@@ -420,6 +472,12 @@ fn prefetch(span: Span) {
 /// Whether the speech model for `locale` is installed. `Err` when this Mac
 /// cannot transcribe the language at all.
 fn model_status(locale: &str) -> Result<bool, String> {
+    if engine(locale) == Engine::Whisper {
+        crate::whisper::language(locale).map_err(|error| error.to_string())?;
+        return crate::whisper::status()
+            .map(|status| status == crate::whisper::Status::Ready)
+            .map_err(|error| error.to_string());
+    }
     let mut status = None;
     run(&["status", locale], |value| {
         status = value["status"].as_str().map(str::to_string);
@@ -436,11 +494,16 @@ fn model_status(locale: &str) -> Result<bool, String> {
 pub fn install_model(locale: &'static str, job: SharedJob) {
     set_phase(&job, Phase::Downloading(0.));
     std::thread::spawn(move || {
-        let result = run(&["install", locale], |value| {
-            if let Some(progress) = value["progress"].as_f64() {
-                set_phase(&job, Phase::Downloading(progress as f32));
-            }
-        });
+        let result = if engine(locale) == Engine::Whisper {
+            crate::whisper::download(|progress| set_phase(&job, Phase::Downloading(progress)))
+                .map_err(|error| error.to_string())
+        } else {
+            run(&["install", locale], |value| {
+                if let Some(progress) = value["progress"].as_f64() {
+                    set_phase(&job, Phase::Downloading(progress as f32));
+                }
+            })
+        };
         set_phase(
             &job,
             match result {

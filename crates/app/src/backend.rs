@@ -211,11 +211,7 @@ fn account_directory(key: &str) -> anyhow::Result<std::path::PathBuf> {
         key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()),
         "Invalid account identifier"
     );
-    let home =
-        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
-    Ok(std::path::PathBuf::from(home)
-        .join("Library/Application Support/Better Audible/Accounts")
-        .join(key))
+    Ok(crate::paths::support()?.join("Accounts").join(key))
 }
 
 fn write_json(path: &std::path::Path, value: &impl serde::Serialize) -> anyhow::Result<()> {

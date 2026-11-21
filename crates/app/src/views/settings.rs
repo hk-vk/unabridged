@@ -192,8 +192,54 @@ impl Shell {
             ))
             .children(self.account_settings(cx))
             .children(self.storage_settings(cx))
+            .child(self.speech_settings(cx))
             .child(self.about_settings(cx))
             .into_any_element()
+    }
+
+    fn speech_settings(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let ready = matches!(crate::whisper::status(), Ok(crate::whisper::Status::Ready));
+        let caption = if self.speech_model_busy {
+            "Updating speech model…".to_string()
+        } else if ready {
+            format!("Downloaded, {} MB", crate::whisper::MODEL_MB)
+        } else {
+            "Not downloaded".to_string()
+        };
+        let action = Button::new("settings-speech-model")
+            .label(if ready { "Remove" } else { "Download" })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.speech_model_busy {
+                    return;
+                }
+                this.speech_model_busy = true;
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    let result = cx
+                        .background_spawn(async move {
+                            if ready {
+                                crate::whisper::remove()
+                            } else {
+                                crate::whisper::download(|_| {})
+                            }
+                        })
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.speech_model_busy = false;
+                        if let Err(error) = result {
+                            this.download_notice = Some(error.to_string());
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }));
+        settings_section(
+            Icon::Download,
+            "Read along",
+            setting_row("Open speech model".into(), caption, action, cx.theme()),
+            cx,
+        )
     }
 
     fn account_settings(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {

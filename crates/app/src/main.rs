@@ -4,6 +4,7 @@ mod books;
 mod browser_tab;
 mod library;
 mod malayalam;
+mod paths;
 mod playback;
 mod player;
 mod region;
@@ -12,6 +13,7 @@ mod shell;
 mod tour;
 mod transcript;
 mod views;
+mod whisper;
 mod windows;
 
 use books::*;
@@ -254,6 +256,7 @@ struct Shell {
     /// Speed and volume, saved between launches.
     prefs: backend::PlaybackPrefs,
     read_along: Option<ReadAlong>,
+    speech_model_busy: bool,
     /// The transcript on Now Playing.
     read_along_follow: Follow,
     /// The transcript in the expanded mini player.
