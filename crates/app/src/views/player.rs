@@ -691,9 +691,6 @@ pub(crate) fn read_along_list(
     let Some(active) = &shell.player else {
         return div().into_any_element();
     };
-    if !cfg!(target_os = "macos") {
-        return message("Read along is not available on this platform yet.");
-    }
     // An outlined action under a message: Download, Try again.
     let action = |id: &'static str, label: &'static str, glyph: Icon| {
         Chip::new(id)

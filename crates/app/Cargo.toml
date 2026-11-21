@@ -30,12 +30,12 @@ model.workspace = true
 raw-window-handle = "0.6"
 ui.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
 [target.'cfg(windows)'.dependencies]
 dunce = "1"
 windows = { version = "0.61.3", features = ["Media_Playback", "Media_Core", "Storage", "Storage_Streams", "Foundation", "Win32_System_WinRT", "Win32_System_Com", "Win32_Globalization", "Win32_UI_WindowsAndMessaging"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-whisper-rs = { version = "0.16", features = ["metal"] }
 
 [lints]
 workspace = true
