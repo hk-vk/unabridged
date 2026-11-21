@@ -15,7 +15,6 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use secret::Secret;
-#[cfg(unix)]
 pub use store::FileStore;
 #[cfg(target_os = "macos")]
 pub use store::KeychainStore;
