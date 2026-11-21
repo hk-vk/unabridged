@@ -372,15 +372,15 @@ impl Shell {
             .when(!self.confirm_clear_downloads, |row| {
                 row.child(
                     Button::new("settings-reveal")
-                        .label("Show in Finder")
+                        .label(crate::file_browser::SHOW_LABEL)
                         .icon(Icon::Folder)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let _ = std::fs::create_dir_all(&directory);
-                            if let Err(error) =
-                                std::process::Command::new("open").arg(&directory).spawn()
-                            {
-                                this.download_notice =
-                                    Some(format!("Could not open Finder: {error}"));
+                            if let Err(error) = crate::file_browser::open(&directory, false) {
+                                this.download_notice = Some(format!(
+                                    "Could not open {}: {error}",
+                                    crate::file_browser::NAME
+                                ));
                                 cx.notify();
                             }
                         })),

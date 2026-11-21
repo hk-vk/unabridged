@@ -3,9 +3,11 @@
 //! running browser, through Apple Events, for a tab on `/ap/maplanding`, and
 //! closes that tab once read. macOS asks once per browser before allowing it.
 
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 /// Browsers with an AppleScript tab model (`windows` → `tabs` → `URL`).
+#[cfg(target_os = "macos")]
 const BROWSERS: &[&str] = &[
     "com.apple.Safari",
     "com.google.Chrome",
@@ -19,14 +21,22 @@ const BROWSERS: &[&str] = &[
 
 pub enum Scan {
     /// The full redirect URL, read from a tab that has now been closed.
+    #[cfg(target_os = "macos")]
     Found(String),
     /// No running browser had the redirect open yet.
     NotFound,
     /// A browser is open but macOS refused access to it.
+    #[cfg(target_os = "macos")]
     Denied,
 }
 
 /// Looks through every running supported browser once.
+#[cfg(not(target_os = "macos"))]
+pub fn find_redirect() -> Scan {
+    Scan::NotFound
+}
+
+#[cfg(target_os = "macos")]
 pub fn find_redirect() -> Scan {
     let running = running_bundle_ids();
     let mut denied = false;
@@ -45,6 +55,7 @@ pub fn find_redirect() -> Scan {
 }
 
 /// Bundle ids of running apps, from `lsappinfo`, which needs no permission.
+#[cfg(target_os = "macos")]
 fn running_bundle_ids() -> Vec<String> {
     let Ok(output) = Command::new("/usr/bin/lsappinfo").arg("list").output() else {
         return Vec::new();
@@ -58,6 +69,7 @@ fn running_bundle_ids() -> Vec<String> {
 }
 
 /// `Err(true)` means macOS denied Apple Events to this browser.
+#[cfg(target_os = "macos")]
 fn scan_browser(bundle_id: &str) -> Result<Option<String>, bool> {
     // The id has to be literal: `tabs` and `URL` only resolve against a named
     // application's dictionary when the script compiles.

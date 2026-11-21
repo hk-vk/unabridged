@@ -2,8 +2,10 @@
 mod backend;
 mod books;
 mod browser_tab;
+mod file_browser;
 mod library;
 mod malayalam;
+mod paths;
 mod playback;
 mod player;
 mod region;
@@ -61,12 +63,18 @@ enum Page {
     Settings,
 }
 
+const LOCAL_BOOKS_LABEL: &str = if cfg!(target_os = "macos") {
+    "On this Mac"
+} else {
+    "On this PC"
+};
+
 /// The name a back link shows for `page`.
 fn page_name(page: Page) -> &'static str {
     match page {
         Page::Progress => "In progress",
         Page::Explore | Page::Search => "Explore",
-        Page::OnThisMac => "On this Mac",
+        Page::OnThisMac => LOCAL_BOOKS_LABEL,
         Page::Bookmarks => "Bookmarks",
         Page::Finished => "Finished",
         Page::Authors | Page::AuthorBooks => "Authors",
@@ -429,10 +437,42 @@ fn main() {
     app.run(|cx| {
         gpui_kit::init(cx);
         cx.bind_keys([
-            gpui_kit::KeyBinding::new("cmd-f", FocusSearch, None),
-            gpui_kit::KeyBinding::new("cmd-=", ReadAlongLarger, None),
-            gpui_kit::KeyBinding::new("cmd-+", ReadAlongLarger, None),
-            gpui_kit::KeyBinding::new("cmd--", ReadAlongSmaller, None),
+            gpui_kit::KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-f"
+                } else {
+                    "ctrl-f"
+                },
+                FocusSearch,
+                None,
+            ),
+            gpui_kit::KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-="
+                } else {
+                    "ctrl-="
+                },
+                ReadAlongLarger,
+                None,
+            ),
+            gpui_kit::KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-+"
+                } else {
+                    "ctrl-+"
+                },
+                ReadAlongLarger,
+                None,
+            ),
+            gpui_kit::KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd--"
+                } else {
+                    "ctrl--"
+                },
+                ReadAlongSmaller,
+                None,
+            ),
         ]);
         if let Err(error) = ui::init(backend::load_appearance(), cx) {
             eprintln!("Could not initialize the interface: {error:#}");

@@ -152,6 +152,10 @@ impl Shell {
                 cx.open_url(url.as_str());
                 self.account = Account::SigningIn(Box::new(session));
                 self.sign_in_note = None;
+                #[cfg(not(target_os = "macos"))]
+                {
+                    self.sign_in_note = Some(("When the page says it can’t be found, press Ctrl+L then Ctrl+C to copy its address.".into(), false));
+                }
                 self.watch_sign_in(cx);
             }
             Err(error) => self.account = Account::Error(error.to_string()),
@@ -197,10 +201,12 @@ impl Shell {
                             return false;
                         }
                         match scan {
+                            #[cfg(target_os = "macos")]
                             browser_tab::Scan::Found(url) => {
                                 this.connect_sign_in(url, cx);
                                 return false;
                             }
+                            #[cfg(target_os = "macos")]
                             browser_tab::Scan::Denied if this.sign_in_note.is_none() => {
                                 this.sign_in_note = Some((
                                     "Better Audible can’t see your browser’s tabs. When the page says it can’t be found, press ⌘L then ⌘C to copy its address.".into(),

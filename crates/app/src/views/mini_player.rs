@@ -38,7 +38,32 @@ pub(crate) fn float_everywhere(window: &Window) {
             unsafe { ba_window_float_everywhere(appkit.ns_view.as_ptr()) }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        use ::windows::Win32::{
+            Foundation::HWND,
+            UI::WindowsAndMessaging::{
+                HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+            },
+        };
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = HasWindowHandle::window_handle(window)
+            && let RawWindowHandle::Win32(win32) = handle.as_raw()
+        {
+            let _ = unsafe {
+                SetWindowPos(
+                    HWND(win32.hwnd.get() as *mut _),
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+            };
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = window;
 }
 
@@ -46,7 +71,7 @@ pub(crate) fn float_everywhere(window: &Window) {
 pub(crate) const EXPANDED_HEIGHT: f32 = 470.;
 
 /// Resizes the mini player window, top edge fixed, on the sheet curve.
-pub(crate) fn set_height(window: &Window, height: f32, duration: std::time::Duration) {
+pub(crate) fn set_height(window: &mut Window, height: f32, duration: std::time::Duration) {
     #[cfg(target_os = "macos")]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -68,7 +93,10 @@ pub(crate) fn set_height(window: &Window, height: f32, duration: std::time::Dura
         }
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = (window, height, duration);
+    {
+        let _ = duration;
+        window.resize(size(window.bounds().size.width, px(height)));
+    }
 }
 
 fn lerp(from: f32, to: f32, t: f32) -> f32 {

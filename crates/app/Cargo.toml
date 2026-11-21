@@ -1,6 +1,6 @@
 [package]
 name = "better-audible"
-description = "Better Audible: a native macOS Audible client."
+description = "Better Audible: a native Audible client."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,8 +27,13 @@ model.workspace = true
 raw-window-handle = "0.6"
 ui.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+dunce = "1"
+windows = { version = "0.61.3", features = ["Media_Playback", "Media_Core", "Storage", "Storage_Streams", "Foundation", "Win32_System_WinRT", "Win32_System_Com", "Win32_Globalization", "Win32_UI_WindowsAndMessaging"] }
+
 [lints]
 workspace = true
 
 [build-dependencies]
 cc = "1"
+embed-resource = "3"

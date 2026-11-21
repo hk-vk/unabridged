@@ -73,18 +73,160 @@ mod platform {
         }
     }
 }
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use platform::Player;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod platform {
+    use std::{path::Path, sync::mpsc, time::Duration};
+    use windows::{
+        Foundation::{TimeSpan, TypedEventHandler},
+        Media::{
+            Core::MediaSource,
+            Playback::{MediaPlaybackState, MediaPlayer, MediaPlayerFailedEventArgs},
+        },
+        Storage::StorageFile,
+        Win32::{
+            Foundation::RPC_E_CHANGED_MODE,
+            System::WinRT::{RO_INIT_SINGLETHREADED, RoInitialize, RoUninitialize},
+        },
+        core::HSTRING,
+    };
+
+    struct Apartment(bool);
+    impl Apartment {
+        fn new() -> windows::core::Result<Self> {
+            match unsafe { RoInitialize(RO_INIT_SINGLETHREADED) } {
+                Ok(()) => Ok(Self(true)),
+                Err(error) if error.code() == RPC_E_CHANGED_MODE => Ok(Self(false)),
+                Err(error) => Err(error),
+            }
+        }
+    }
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { RoUninitialize() };
+            }
+        }
+    }
+    thread_local! {
+        static APARTMENT: windows::core::Result<Apartment> = Apartment::new();
+    }
+    pub struct Player(MediaPlayer, std::marker::PhantomData<std::rc::Rc<()>>);
+
+    impl Player {
+        pub fn open(path: &Path) -> anyhow::Result<Self> {
+            APARTMENT.with(|apartment| apartment.as_ref().map(|_| ()).map_err(Clone::clone))?;
+            let path = dunce::canonicalize(path)?;
+            let file =
+                StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str()))?.get()?;
+            let source = MediaSource::CreateFromStorageFile(&file)?;
+            let player = MediaPlayer::new()?;
+            player.SetAutoPlay(false)?;
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let opened_sender = sender.clone();
+            let opened = player.MediaOpened(&TypedEventHandler::new(move |_, _| {
+                let _ = opened_sender.try_send(Ok(()));
+                Ok(())
+            }))?;
+            let failed = player.MediaFailed(&TypedEventHandler::<
+                MediaPlayer,
+                MediaPlayerFailedEventArgs,
+            >::new(move |_, args| {
+                let message = args.as_ref().map_or_else(
+                    || "Could not open this audio file".into(),
+                    |args| {
+                        format!(
+                            "Could not open this audio file: {} ({:?}, {:?})",
+                            args.ErrorMessage().unwrap_or_default(),
+                            args.Error(),
+                            args.ExtendedErrorCode()
+                        )
+                    },
+                );
+                let _ = sender.try_send(Err(message));
+                Ok(())
+            }))?;
+            let result = (|| -> anyhow::Result<()> {
+                player.SetSource(&source)?;
+                receiver
+                    .recv_timeout(Duration::from_secs(10))?
+                    .map_err(anyhow::Error::msg)
+            })();
+            let _ = player.RemoveMediaOpened(opened);
+            let _ = player.RemoveMediaFailed(failed);
+            if let Err(error) = result {
+                let _ = player.Close();
+                return Err(error);
+            }
+            Ok(Self(player, std::marker::PhantomData))
+        }
+        pub fn play(&self) -> anyhow::Result<()> {
+            Ok(self.0.Play()?)
+        }
+        pub fn pause(&self) {
+            let _ = self.0.Pause();
+        }
+        pub fn position(&self) -> f64 {
+            self.0
+                .PlaybackSession()
+                .and_then(|s| s.Position())
+                .map_or(0., |t| t.Duration as f64 / 10_000_000.)
+        }
+        pub fn duration(&self) -> f64 {
+            self.0
+                .PlaybackSession()
+                .and_then(|s| s.NaturalDuration())
+                .map_or(0., |t| t.Duration as f64 / 10_000_000.)
+        }
+        pub fn seek(&self, seconds: f64) {
+            if let Ok(session) = self.0.PlaybackSession() {
+                let _ = session.SetPosition(TimeSpan {
+                    Duration: (seconds.clamp(0., self.duration()) * 10_000_000.) as i64,
+                });
+            }
+        }
+        pub fn is_playing(&self) -> bool {
+            self.0
+                .PlaybackSession()
+                .and_then(|s| s.PlaybackState())
+                .is_ok_and(|s| s == MediaPlaybackState::Playing)
+        }
+        pub fn rate(&self) -> f32 {
+            self.0
+                .PlaybackSession()
+                .and_then(|s| s.PlaybackRate())
+                .unwrap_or(1.) as f32
+        }
+        pub fn set_rate(&self, rate: f32) {
+            if let Ok(session) = self.0.PlaybackSession() {
+                let _ = session.SetPlaybackRate(rate.clamp(0.5, 2.0) as f64);
+            }
+        }
+        pub fn volume(&self) -> f32 {
+            self.0.Volume().unwrap_or(0.) as f32
+        }
+        pub fn set_volume(&self, volume: f32) {
+            let _ = self.0.SetVolume(volume.clamp(0., 1.) as f64);
+        }
+    }
+    impl Drop for Player {
+        fn drop(&mut self) {
+            let _ = self.0.Close();
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub struct Player;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl Player {
     pub fn open(_: &std::path::Path) -> anyhow::Result<Self> {
-        anyhow::bail!("Playback is currently available on macOS only")
+        anyhow::bail!("Playback is not available on this platform")
     }
     pub fn play(&self) -> anyhow::Result<()> {
-        anyhow::bail!("Playback is currently available on macOS only")
+        anyhow::bail!("Playback is not available on this platform")
     }
     pub fn pause(&self) {}
     pub fn position(&self) -> f64 {
@@ -107,10 +249,26 @@ impl Player {
     pub fn set_volume(&self, _volume: f32) {}
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::Player;
     use std::io::Write;
+
+    #[test]
+    fn rejects_a_missing_file() {
+        assert!(
+            Player::open(&std::env::temp_dir().join("better-audible-missing-file.m4b")).is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_empty_audio() {
+        let path =
+            std::env::temp_dir().join(format!("better-audible-empty-{}.wav", std::process::id()));
+        std::fs::write(&path, []).unwrap();
+        assert!(Player::open(&path).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn opens_a_generated_m4b_when_ffmpeg_is_available() {

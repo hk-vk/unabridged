@@ -403,16 +403,16 @@ impl Shell {
                                 IconButton::new(format!("reveal-{asin}"), Icon::Folder, 16.)
                                     .hit_area(30.)
                                     .hover_fill(theme_fill)
-                                    .tooltip("Show in Finder")
+                                    .tooltip(crate::file_browser::SHOW_LABEL)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(path) = &local_path
-                                            && let Err(error) = std::process::Command::new("open")
-                                                .arg("-R")
-                                                .arg(path)
-                                                .spawn()
+                                            && let Err(error) =
+                                                crate::file_browser::open(path, true)
                                         {
-                                            this.download_notice =
-                                                Some(format!("Could not open Finder: {error}"));
+                                            this.download_notice = Some(format!(
+                                                "Could not open {}: {error}",
+                                                crate::file_browser::NAME
+                                            ));
                                             cx.notify();
                                         }
                                     })),
