@@ -69,6 +69,14 @@ const LOCAL_BOOKS_LABEL: &str = if cfg!(target_os = "macos") {
     "On this PC"
 };
 
+fn device_copy(text: &str) -> String {
+    if cfg!(target_os = "macos") {
+        text.to_owned()
+    } else {
+        text.replace("Mac", "PC")
+    }
+}
+
 /// The name a back link shows for `page`.
 fn page_name(page: Page) -> &'static str {
     match page {
@@ -431,48 +439,26 @@ pub(crate) fn sync_app_icon(system: gpui_kit::WindowAppearance, cx: &gpui_kit::A
     let _ = light;
 }
 
+macro_rules! shortcut {
+    ($key:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $key)
+        } else {
+            concat!("ctrl-", $key)
+        }
+    };
+}
+
 fn main() {
     let app = gpui_kit::application().with_assets(ui::Assets);
     app.on_reopen(reopen);
     app.run(|cx| {
         gpui_kit::init(cx);
         cx.bind_keys([
-            gpui_kit::KeyBinding::new(
-                if cfg!(target_os = "macos") {
-                    "cmd-f"
-                } else {
-                    "ctrl-f"
-                },
-                FocusSearch,
-                None,
-            ),
-            gpui_kit::KeyBinding::new(
-                if cfg!(target_os = "macos") {
-                    "cmd-="
-                } else {
-                    "ctrl-="
-                },
-                ReadAlongLarger,
-                None,
-            ),
-            gpui_kit::KeyBinding::new(
-                if cfg!(target_os = "macos") {
-                    "cmd-+"
-                } else {
-                    "ctrl-+"
-                },
-                ReadAlongLarger,
-                None,
-            ),
-            gpui_kit::KeyBinding::new(
-                if cfg!(target_os = "macos") {
-                    "cmd--"
-                } else {
-                    "ctrl--"
-                },
-                ReadAlongSmaller,
-                None,
-            ),
+            gpui_kit::KeyBinding::new(shortcut!("f"), FocusSearch, None),
+            gpui_kit::KeyBinding::new(shortcut!("="), ReadAlongLarger, None),
+            gpui_kit::KeyBinding::new(shortcut!("+"), ReadAlongLarger, None),
+            gpui_kit::KeyBinding::new(shortcut!("-"), ReadAlongSmaller, None),
         ]);
         if let Err(error) = ui::init(backend::load_appearance(), cx) {
             eprintln!("Could not initialize the interface: {error:#}");
@@ -489,6 +475,25 @@ fn main() {
 mod download_tests {
     use super::*;
     use audible::{DownloadEvent, download::Progress};
+
+    #[test]
+    fn platform_copy_and_shortcuts_preserve_macos_wording() {
+        assert_eq!(device_copy(""), "");
+        assert_eq!(device_copy("Downloads"), "Downloads");
+        if cfg!(target_os = "macos") {
+            assert_eq!(device_copy("Saved on this Mac"), "Saved on this Mac");
+            assert_eq!(shortcut!("f"), "cmd-f");
+            assert_eq!(shortcut!("="), "cmd-=");
+            assert_eq!(shortcut!("+"), "cmd-+");
+            assert_eq!(shortcut!("-"), "cmd--");
+        } else {
+            assert_eq!(device_copy("Saved on this Mac"), "Saved on this PC");
+            assert_eq!(shortcut!("f"), "ctrl-f");
+            assert_eq!(shortcut!("="), "ctrl-=");
+            assert_eq!(shortcut!("+"), "ctrl-+");
+            assert_eq!(shortcut!("-"), "ctrl--");
+        }
+    }
 
     #[test]
     fn sleep_timer_only_stops_at_its_deadline_or_matching_chapter_end() {

@@ -89,6 +89,9 @@ mod platform {
         Win32::{
             Foundation::RPC_E_CHANGED_MODE,
             System::WinRT::{RO_INIT_SINGLETHREADED, RoInitialize, RoUninitialize},
+            UI::WindowsAndMessaging::{
+                DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+            },
         },
         core::HSTRING,
     };
@@ -134,25 +137,44 @@ mod platform {
                 MediaPlayer,
                 MediaPlayerFailedEventArgs,
             >::new(move |_, args| {
-                let message = args.as_ref().map_or_else(
-                    || "Could not open this audio file".into(),
+                let error = args.as_ref().map_or_else(
+                    || anyhow::anyhow!("Could not open this audio file"),
                     |args| {
-                        format!(
-                            "Could not open this audio file: {} ({:?}, {:?})",
-                            args.ErrorMessage().unwrap_or_default(),
-                            args.Error(),
-                            args.ExtendedErrorCode()
+                        let code = args
+                            .ExtendedErrorCode()
+                            .unwrap_or(windows::core::HRESULT(0x80004005u32 as i32));
+                        anyhow::Error::new(windows::core::Error::from_hresult(code)).context(
+                            format!(
+                                "Could not open this audio file: {}",
+                                args.ErrorMessage().unwrap_or_default()
+                            ),
                         )
                     },
                 );
-                let _ = sender.try_send(Err(message));
+                let _ = sender.try_send(Err(error));
                 Ok(())
             }))?;
             let result = (|| -> anyhow::Result<()> {
                 player.SetSource(&source)?;
-                receiver
-                    .recv_timeout(Duration::from_secs(10))?
-                    .map_err(anyhow::Error::msg)
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    match receiver.recv_timeout(Duration::from_millis(10)) {
+                        Ok(result) => break result,
+                        Err(mpsc::RecvTimeoutError::Timeout)
+                            if std::time::Instant::now() < deadline =>
+                        {
+                            let mut message = MSG::default();
+                            // The UI apartment must dispatch messages while media opens.
+                            unsafe {
+                                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                                    let _ = TranslateMessage(&message);
+                                    DispatchMessageW(&message);
+                                }
+                            }
+                        }
+                        Err(error) => break Err(error.into()),
+                    }
+                }
             })();
             let _ = player.RemoveMediaOpened(opened);
             let _ = player.RemoveMediaFailed(failed);
@@ -254,6 +276,25 @@ mod tests {
     use super::Player;
     use std::io::Write;
 
+    fn open_test_audio(path: &std::path::Path) -> Option<Player> {
+        match Player::open(path) {
+            Ok(player) => Some(player),
+            Err(error) => {
+                #[cfg(target_os = "windows")]
+                if error
+                    .downcast_ref::<windows::core::Error>()
+                    .is_some_and(|error| error.code().0 == 0xC00D36FAu32 as i32)
+                {
+                    eprintln!(
+                        "Skipping playback test: Windows has no usable audio output endpoint (MF_E_CANNOT_CREATE_SINK)."
+                    );
+                    return None;
+                }
+                panic!("Could not open test audio: {error:#}");
+            }
+        }
+    }
+
     #[test]
     fn rejects_a_missing_file() {
         assert!(
@@ -277,6 +318,7 @@ mod tests {
             .output()
             .is_err()
         {
+            eprintln!("Skipping generated m4b playback test: ffmpeg is not installed.");
             return;
         }
         let path =
@@ -299,7 +341,10 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
-        let player = Player::open(&path).unwrap();
+        let Some(player) = open_test_audio(&path) else {
+            std::fs::remove_file(path).unwrap();
+            return;
+        };
         assert!((player.duration() - 1.).abs() < 0.2);
         player.seek(0.5);
         assert!((player.position() - 0.5).abs() < 0.1);
@@ -327,7 +372,10 @@ mod tests {
         file.write_all(&data_size.to_le_bytes()).unwrap();
         file.write_all(&vec![0; data_size as usize]).unwrap();
         drop(file);
-        let player = Player::open(&path).unwrap();
+        let Some(player) = open_test_audio(&path) else {
+            std::fs::remove_file(path).unwrap();
+            return;
+        };
         assert!((player.duration() - 1.).abs() < 0.05);
         player.seek(0.5);
         assert!((player.position() - 0.5).abs() < 0.05);

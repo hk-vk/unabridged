@@ -685,12 +685,15 @@ pub(crate) fn read_along_list(
         div()
             .type_style(ui::text::BODY)
             .text_color(palette.on_field_muted)
-            .child(text.to_string())
+            .child(device_copy(text))
             .into_any_element()
     };
     let Some(active) = &shell.player else {
         return div().into_any_element();
     };
+    if !cfg!(target_os = "macos") {
+        return message("Read along is not available on this platform yet.");
+    }
     // An outlined action under a message: Download, Try again.
     let action = |id: &'static str, label: &'static str, glyph: Icon| {
         Chip::new(id)

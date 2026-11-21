@@ -174,7 +174,7 @@ impl Shell {
         match &self.account {
             Account::Loading if self.connecting_after_sign_in => base()
                 .child(sign_in_steps(2, cx))
-                .child(intro("Connecting to Audible", "You’re signed in. Registering this Mac and loading your library; you can leave this window open."))
+                .child(intro("Connecting to Audible", if cfg!(target_os = "macos") { "You’re signed in. Registering this Mac and loading your library; you can leave this window open." } else { "You’re signed in. Registering this PC and loading your library; you can leave this window open." }))
                 .child(status("Loading your library…"))
                 .into_any_element(),
             Account::Loading => base().child(heading("Connecting to Audible"))

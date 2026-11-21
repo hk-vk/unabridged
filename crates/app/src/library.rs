@@ -564,7 +564,7 @@ impl Shell {
             let _ = this.update(cx, |this, cx| {
                 this.download = None;
                 this.download_notice = Some(match result {
-                    Ok(_) => format!("{title} is downloaded to this Mac."),
+                    Ok(_) => format!("{title} {}", device_copy("is downloaded to this Mac.")),
                     Err(error) => format!("Download failed: {error}"),
                 });
                 cx.notify();
@@ -621,7 +621,7 @@ impl Shell {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.download_notice = Some(match result {
-                    Ok(()) if add => "Bookmark saved on this Mac.".into(),
+                    Ok(()) if add => device_copy("Bookmark saved on this Mac."),
                     Ok(()) => "Bookmark removed.".into(),
                     Err(error) => format!("Could not save bookmark: {error}"),
                 });
