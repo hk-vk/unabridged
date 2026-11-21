@@ -123,7 +123,8 @@ fn session() -> &'static Arc<SessionStore> {
             keychain: audible::credentials::KeychainStore::new(),
         });
         #[cfg(not(target_os = "macos"))]
-        let inner: Arc<dyn CredentialStore> = Arc::new(Unsupported);
+        let inner: Arc<dyn CredentialStore> =
+            Arc::new(audible::credentials::FileStore::new(credentials_directory()));
         Arc::new(SessionStore::new(inner))
     })
 }
@@ -131,10 +132,10 @@ fn session() -> &'static Arc<SessionStore> {
 /// Where the sign-in is kept: private files, not the Keychain. The app is
 /// signed with a self-signed identity, which macOS does not trust, so the
 /// Keychain asked for access again after every rebuild and update.
-#[cfg(target_os = "macos")]
 fn credentials_directory() -> std::path::PathBuf {
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    std::path::PathBuf::from(home).join("Library/Application Support/Better Audible/Credentials")
+    crate::paths::support()
+        .expect("Application data directory not found")
+        .join("Credentials")
 }
 
 /// The file store, which moves a sign-in saved by older versions out of the
@@ -174,27 +175,7 @@ impl CredentialStore for MovedFromKeychain {
 }
 
 fn store() -> anyhow::Result<Arc<dyn CredentialStore>> {
-    anyhow::ensure!(
-        cfg!(target_os = "macos"),
-        "Account storage is currently supported on macOS only"
-    );
     Ok(session().clone())
-}
-
-#[cfg(not(target_os = "macos"))]
-struct Unsupported;
-
-#[cfg(not(target_os = "macos"))]
-impl CredentialStore for Unsupported {
-    fn load(&self, _: &str) -> audible::Result<Option<audible::credentials::Credentials>> {
-        Ok(None)
-    }
-    fn save(&self, _: &str, _: &audible::credentials::Credentials) -> audible::Result<()> {
-        Ok(())
-    }
-    fn delete(&self, _: &str) -> audible::Result<()> {
-        Ok(())
-    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -521,9 +502,7 @@ pub fn save_position(
 /// Fetch a cover to the disposable caches directory. Covers are public images;
 /// credentials are never sent with this request.
 pub fn cover(asin: &audible::Asin, url: &str) -> anyhow::Result<std::path::PathBuf> {
-    let home =
-        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
-    let directory = std::path::PathBuf::from(home).join("Library/Caches/Better Audible/Covers");
+    let directory = crate::paths::cache()?.join("Covers");
     let path = directory.join(format!("{asin}.image"));
     if path.is_file() {
         return Ok(path);
@@ -877,10 +856,7 @@ impl AppearanceRecord {
 }
 
 fn appearance_path() -> anyhow::Result<std::path::PathBuf> {
-    let home =
-        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
-    Ok(std::path::PathBuf::from(home)
-        .join("Library/Application Support/Better Audible/appearance.json"))
+    Ok(crate::paths::support()?.join("appearance.json"))
 }
 
 /// Speed, volume and download quality, carried over between launches.

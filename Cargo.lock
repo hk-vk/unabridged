@@ -604,6 +604,8 @@ dependencies = [
  "audible",
  "cc",
  "chrono",
+ "dunce",
+ "embed-resource",
  "gpui-kit",
  "hex",
  "image",
@@ -617,6 +619,7 @@ dependencies = [
  "tokio",
  "ui",
  "whisper-rs",
+ "windows 0.61.3",
 ]
 
 [[package]]

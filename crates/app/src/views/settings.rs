@@ -250,7 +250,7 @@ impl Shell {
         };
         let theme = cx.theme().clone();
         let status = if library.offline {
-            "Offline. Showing the library saved on this Mac."
+            &device_copy("Offline. Showing the library saved on this Mac.")
         } else {
             "Connected. Progress syncs with your other devices."
         };
@@ -301,7 +301,8 @@ impl Shell {
             });
         let caption = if self.confirm_sign_out {
             format!(
-                "Sign out of Audible {marketplace}? You can sign in again with any store. Downloads stay on this Mac."
+                "Sign out of Audible {marketplace}? You can sign in again with any store. {}",
+                device_copy("Downloads stay on this Mac.")
             )
         } else {
             status.to_string()
@@ -334,7 +335,12 @@ impl Shell {
         // A standing invitation, never a prompt: it only shows here.
         let star_row = setting_row(
             "Enjoying Unabridged?".into(),
-            "A star on GitHub helps other Mac listeners find it.".into(),
+            if cfg!(target_os = "macos") {
+                "A star on GitHub helps other Mac listeners find it."
+            } else {
+                "A star on GitHub helps other PC listeners find it."
+            }
+            .into(),
             Button::new("star-on-github")
                 .label("Star on GitHub")
                 .icon(Icon::External)
@@ -396,14 +402,23 @@ impl Shell {
         let removable = books.iter().filter(|book| !self.in_use(&book.asin)).count();
         let summary = match books.len() {
             0 => "No books downloaded yet.".to_string(),
-            1 => format!("1 book, {} on this Mac.", backend::size_label(total)),
-            count => format!("{count} books, {} on this Mac.", backend::size_label(total)),
+            1 => format!(
+                "1 book, {} {}",
+                backend::size_label(total),
+                device_copy("on this Mac.")
+            ),
+            count => format!(
+                "{count} books, {} {}",
+                backend::size_label(total),
+                device_copy("on this Mac.")
+            ),
         };
         let caption = if self.confirm_clear_downloads {
             let kept = books.len() - removable;
             format!(
-                "Remove {} from this Mac?{} Your progress and bookmarks stay, and you can download them again.",
+                "Remove {} {}{} Your progress and bookmarks stay, and you can download them again.",
                 model::format::plural(removable as u64, "book"),
+                device_copy("from this Mac?"),
                 if kept > 0 {
                     " The book you’re listening to stays."
                 } else {
@@ -420,15 +435,15 @@ impl Shell {
             .when(!self.confirm_clear_downloads, |row| {
                 row.child(
                     Button::new("settings-reveal")
-                        .label("Show in Finder")
+                        .label(crate::file_browser::SHOW_LABEL)
                         .icon(Icon::Folder)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let _ = std::fs::create_dir_all(&directory);
-                            if let Err(error) =
-                                std::process::Command::new("open").arg(&directory).spawn()
-                            {
-                                this.download_notice =
-                                    Some(format!("Could not open Finder: {error}"));
+                            if let Err(error) = crate::file_browser::open(&directory, false) {
+                                this.download_notice = Some(format!(
+                                    "Could not open {}: {error}",
+                                    crate::file_browser::NAME
+                                ));
                                 cx.notify();
                             }
                         })),

@@ -347,7 +347,7 @@ impl Shell {
             .flex()
             .flex_col()
             .px(px(12.))
-            .pt(px(58.))
+            .pt(px(if cfg!(target_os = "macos") { 58. } else { 16. }))
             .border_r_1()
             .border_color(theme.colors.hairline)
             .bg(theme.colors.sidebar)
@@ -356,7 +356,7 @@ impl Shell {
             .child(SidebarHeader::new("Your library"))
             .child(self.nav("Library", Icon::Library, Page::Library, cx))
             .child(self.nav("In progress", Icon::Clock, Page::Progress, cx))
-            .child(self.nav("On this Mac", Icon::Download, Page::OnThisMac, cx))
+            .child(self.nav(LOCAL_BOOKS_LABEL, Icon::Download, Page::OnThisMac, cx))
             .child(self.nav("Bookmarks", Icon::Bookmark, Page::Bookmarks, cx))
             .child(div().h(px(20.)))
             .child(SidebarHeader::new("Browse"))
@@ -372,6 +372,20 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.render_frame(window, cx);
+        #[cfg(target_os = "windows")]
+        return crate::chrome::frame(content, window, cx, false);
+        #[cfg(not(target_os = "windows"))]
+        content
+    }
+}
+
+impl Shell {
+    fn render_frame(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         if self.page == Page::NowPlaying && self.player.is_some() {
             return self.player_view(window, cx);
         }
@@ -381,7 +395,7 @@ impl Render for Shell {
             Page::AllBooks => "All books",
             Page::Progress => "In progress",
             Page::Explore => "Explore",
-            Page::OnThisMac => "On this Mac",
+            Page::OnThisMac => LOCAL_BOOKS_LABEL,
             Page::Bookmarks => "Bookmarks",
             Page::Search => "Search",
             Page::Finished => "Finished",
@@ -438,9 +452,23 @@ impl Render for Shell {
                     .flex_col()
                     .child(Toolbar::new(title).trailing(
                         if matches!(self.page, Page::Explore | Page::CatalogBook) {
-                            SearchField::new(&self.search, "⌘F")
+                            SearchField::new(
+                                &self.search,
+                                if cfg!(target_os = "macos") {
+                                    "⌘F"
+                                } else {
+                                    "Ctrl+F"
+                                },
+                            )
                         } else {
-                            SearchField::new(&self.library_search, "⌘F")
+                            SearchField::new(
+                                &self.library_search,
+                                if cfg!(target_os = "macos") {
+                                    "⌘F"
+                                } else {
+                                    "Ctrl+F"
+                                },
+                            )
                         },
                     ))
                     .children(download_panel)

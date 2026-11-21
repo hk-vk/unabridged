@@ -6,6 +6,9 @@ name: Release
 # releases/latest/download/appcast.xml. Run it by hand with a tag name for a
 # dry run: it builds and uploads the files as an artifact, publishing nothing.
 #
+# The windows job builds Unabridged.exe into a zip and attaches it to the same
+# release (or to the dry run's artifacts).
+#
 # One-time setup: tools/release-setup.sh, then the secrets it lists.
 
 on:
@@ -142,3 +145,47 @@ jobs:
       - name: Remove the signing keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+  windows:
+    runs-on: windows-latest
+    needs: release
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      PUBLISH: ${{ github.event_name == 'push' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release -p better-audible
+
+      - name: Zip
+        run: |
+          VERSION="${TAG#v}"
+          ZIP="Unabridged-$VERSION-windows-x64.zip"
+          mkdir -p dist/Unabridged
+          cp target/release/better-audible.exe dist/Unabridged/Unabridged.exe
+          cp LICENSE-MIT LICENSE-APACHE THIRD-PARTY.md dist/Unabridged/
+          (cd dist && 7z a -tzip "../$ZIP" Unabridged >/dev/null)
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Keep the build (dry run)
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unabridged-${{ env.VERSION }}-windows
+          path: ${{ env.ZIP }}
+
+      - name: Attach to the release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ZIP"

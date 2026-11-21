@@ -32,7 +32,7 @@ impl Shell {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(TitlebarOptions {
-                        appears_transparent: cfg!(target_os = "macos"),
+                        appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
                         ..Default::default()
                     }),
                     kind: gpui_kit::WindowKind::Floating,
@@ -131,7 +131,7 @@ impl Shell {
                     show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
                     focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
                     titlebar: Some(TitlebarOptions {
-                        appears_transparent: cfg!(target_os = "macos"),
+                        appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
                         ..Default::default()
                     }),
                     ..Default::default()

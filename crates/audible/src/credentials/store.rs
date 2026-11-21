@@ -144,13 +144,11 @@ impl CredentialStore for KeychainStore {
 /// Unlike the Keychain it never shows an access prompt, including after the
 /// app is rebuilt or updated with a self-signed identity. The trade-off: any
 /// process running as the user can read the files without asking.
-#[cfg(unix)]
 #[derive(Debug, Clone)]
 pub struct FileStore {
     directory: std::path::PathBuf,
 }
 
-#[cfg(unix)]
 impl FileStore {
     /// A store keeping its files in `directory`, created on first save.
     pub fn new(directory: impl Into<std::path::PathBuf>) -> Self {
@@ -173,12 +171,10 @@ impl FileStore {
     }
 }
 
-#[cfg(unix)]
 fn file_error(action: &str, error: std::io::Error) -> Error {
     Error::CredentialStore(format!("Credential file {action} failed: {error}"))
 }
 
-#[cfg(unix)]
 impl CredentialStore for FileStore {
     fn load(&self, profile: &str) -> Result<Option<Credentials>> {
         match std::fs::read(self.path(profile)) {
@@ -190,14 +186,18 @@ impl CredentialStore for FileStore {
 
     fn save(&self, profile: &str, credentials: &Credentials) -> Result<()> {
         use std::io::Write as _;
+        #[cfg(unix)]
         use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 
         let bytes = zeroize::Zeroizing::new(encode(credentials)?);
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
+        let mut directory = std::fs::DirBuilder::new();
+        directory.recursive(true);
+        #[cfg(unix)]
+        directory.mode(0o700);
+        directory
             .create(&self.directory)
             .map_err(|e| file_error("folder", e))?;
+        #[cfg(unix)]
         std::fs::set_permissions(&self.directory, std::fs::Permissions::from_mode(0o700))
             .map_err(|e| file_error("folder", e))?;
         // Write a private temporary file, then rename it over the old one, so
@@ -205,10 +205,11 @@ impl CredentialStore for FileStore {
         let path = self.path(profile);
         let temporary = path.with_extension("json.tmp");
         let _ = std::fs::remove_file(&temporary);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
             .open(&temporary)
             .map_err(|e| file_error("write", e))?;
         file.write_all(&bytes)
@@ -226,9 +227,18 @@ impl CredentialStore for FileStore {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod file_store_tests {
     use super::*;
+
+    #[test]
+    fn corrupt_credentials_report_an_error_without_the_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::new(dir.path());
+        std::fs::write(store.path("default"), "not-json-secret").unwrap();
+        let error = store.load("default").unwrap_err().to_string();
+        assert!(!error.contains("not-json-secret"));
+    }
 
     #[test]
     fn missing_profile_loads_none_and_deletes_quietly() {
