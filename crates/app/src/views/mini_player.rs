@@ -70,7 +70,7 @@ pub(crate) fn float_everywhere(window: &Window) {
 }
 
 /// The mini player's height when it is open on read along.
-pub(crate) const EXPANDED_HEIGHT: f32 = 470.;
+pub(crate) const EXPANDED_HEIGHT: f32 = 470. + TITLEBAR_HEIGHT;
 
 /// Resizes the mini player window, top edge fixed, on the sheet curve.
 pub(crate) fn set_height(window: &mut Window, height: f32, duration: std::time::Duration) {
@@ -97,10 +97,7 @@ pub(crate) fn set_height(window: &mut Window, height: f32, duration: std::time::
     #[cfg(not(target_os = "macos"))]
     {
         let _ = duration;
-        window.resize(size(
-            window.bounds().size.width,
-            px(height + TITLEBAR_HEIGHT),
-        ));
+        window.resize(size(window.bounds().size.width, px(height)));
     }
 }
 
@@ -506,5 +503,18 @@ impl MiniPlayer {
                     ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_heights_include_the_titlebar_once() {
+        let titlebar = if cfg!(target_os = "windows") { 32. } else { 0. };
+        assert_eq!(SIZE, (420., 132. + titlebar));
+        assert_eq!(EXPANDED_HEIGHT, 470. + titlebar);
+        assert_eq!(EXPANDED_HEIGHT - SIZE.1, 338.);
     }
 }
