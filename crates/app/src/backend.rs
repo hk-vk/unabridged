@@ -301,6 +301,10 @@ pub fn books_directory(key: &str) -> Option<std::path::PathBuf> {
 
 pub fn downloaded_path(key: &str, asin: &audible::Asin) -> Option<std::path::PathBuf> {
     let directory = books_directory(key)?;
+    playable_path(&directory, asin)
+}
+
+fn playable_path(directory: &std::path::Path, asin: &audible::Asin) -> Option<std::path::PathBuf> {
     ["m4b", "m4a"]
         .iter()
         .map(|extension| directory.join(format!("{asin}.{extension}")))
@@ -551,6 +555,29 @@ pub fn search_catalog(query: String) -> anyhow::Result<Vec<audible::models::Prod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playable_path_excludes_encrypted_and_partial_downloads() {
+        let directory = std::env::temp_dir().join(format!(
+            "better-audible-playable-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let asin = audible::Asin::new("B002V5D7RU").unwrap();
+        assert!(playable_path(&directory, &asin).is_none());
+        for extension in ["aax", "aaxc", "aaxc.part", "partial.m4b"] {
+            std::fs::write(directory.join(format!("{asin}.{extension}")), []).unwrap();
+        }
+        assert!(playable_path(&directory, &asin).is_none());
+        let audio = directory.join(format!("{asin}.m4b"));
+        std::fs::write(&audio, []).unwrap();
+        assert_eq!(playable_path(&directory, &asin), Some(audio.clone()));
+        std::fs::remove_file(audio).unwrap();
+        let audio = directory.join(format!("{asin}.m4a"));
+        std::fs::write(&audio, []).unwrap();
+        assert_eq!(playable_path(&directory, &asin), Some(audio));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn session_store_reuses_reads_and_tracks_writes_and_deletes() {

@@ -1,5 +1,6 @@
 //! Run with `cargo run -p better-audible --example transcribe -- FILE FROM TO LOCALE`.
 #[path = "../src/paths.rs"]
+#[allow(dead_code)]
 mod paths;
 #[path = "../src/whisper.rs"]
 #[allow(dead_code)]
