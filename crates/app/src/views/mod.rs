@@ -209,11 +209,32 @@ impl Shell {
                 });
                 base()
                     .child(sign_in_steps(1, cx))
-                    .child(intro("Finish signing in", "Sign in with Amazon in your browser. This window continues by itself when you’re done."))
+                    .child(intro("Finish signing in", "Sign in with Amazon in your browser. When you’re done, Amazon shows an error page. That’s expected: this window continues by itself."))
                     .child(note.map_or_else(|| status("Waiting for Amazon…").into_any_element(), IntoElement::into_any_element))
                     .child(div().flex().gap(px(12.))
                         .child(Button::new("reopen").label("Open Amazon again").on_click(cx.listener(|this, _, _, cx| this.reopen_sign_in(cx))))
                         .child(Button::new("cancel").label("Cancel").on_click(cx.listener(|this, _, _, cx| this.cancel_sign_in(cx)))))
+                    .child(if self.sign_in_manual {
+                        // The other way in: paste the redirect address.
+                        div().flex().flex_col().gap(px(10.)).max_w(px(570.)).mt(px(6.))
+                            .child(copy("Not continuing? On Amazon’s error page (it looks like this), click the address bar, copy the address (⌘L, then ⌘C), and paste it here.".into()))
+                            .child(gpui_kit::img(AMAZON_PAGE.clone()).w(px(570.)).h(px(182.)).rounded(px(8.)))
+                            .child(div().flex().items_center().gap(px(12.))
+                                .child(div().flex_1().min_w_0().child(TextField::new(&self.sign_in_address)))
+                                .child(Button::new("sign-in-continue").label("Continue").variant(ButtonVariant::Primary).on_click(cx.listener(|this, _, _, cx| this.submit_sign_in_address(cx)))))
+                            .into_any_element()
+                    } else {
+                        let accent = cx.theme().accent.text;
+                        div().id("sign-in-manual").mt(px(6.)).cursor_pointer()
+                            .type_style(ui::text::BODY).text_color(accent)
+                            .hover(|style| style.underline())
+                            .child("Not continuing? Paste the address yourself")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.sign_in_manual = true;
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    })
                     .into_any_element()
             }
             Account::Error(error) => base()
@@ -226,6 +247,16 @@ impl Shell {
         }
     }
 }
+
+/// What Amazon shows once sign-in finishes, with the address to copy
+/// highlighted; shown beside the paste field.
+static AMAZON_PAGE: std::sync::LazyLock<std::sync::Arc<gpui_kit::Image>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Arc::new(gpui_kit::Image::from_bytes(
+            gpui_kit::ImageFormat::Png,
+            include_bytes!("../../../../assets/images/amazon-not-found.png").to_vec(),
+        ))
+    });
 
 /// Choose store → Sign in → Load library, ticking off the steps before
 /// `current`.

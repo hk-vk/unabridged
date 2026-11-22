@@ -152,6 +152,7 @@ impl Shell {
                 cx.open_url(url.as_str());
                 self.account = Account::SigningIn(Box::new(session));
                 self.sign_in_note = None;
+                self.sign_in_manual = false;
                 self.watch_sign_in(cx);
             }
             Err(error) => self.account = Account::Error(error.to_string()),
@@ -166,6 +167,20 @@ impl Shell {
         {
             cx.open_url(url.as_str());
         }
+    }
+
+    /// Connects with the address pasted into the sign-in field.
+    pub(crate) fn submit_sign_in_address(&mut self, cx: &mut Context<Self>) {
+        let address = self.sign_in_address.read(cx).value().trim().to_string();
+        if address.is_empty() {
+            self.sign_in_note = Some((
+                "Paste the address of Amazon’s error page first.".into(),
+                true,
+            ));
+            cx.notify();
+            return;
+        }
+        self.connect_sign_in(address, cx);
     }
 
     pub(crate) fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
@@ -202,10 +217,13 @@ impl Shell {
                                 return false;
                             }
                             browser_tab::Scan::Denied if this.sign_in_note.is_none() => {
+                                // It can't continue by itself: show the
+                                // paste option straight away.
                                 this.sign_in_note = Some((
-                                    "Better Audible can’t see your browser’s tabs. When the page says it can’t be found, press ⌘L then ⌘C to copy its address.".into(),
+                                    "Unabridged can’t see your browser’s tabs, so paste the address below.".into(),
                                     false,
                                 ));
+                                this.sign_in_manual = true;
                                 cx.notify();
                             }
                             _ => {}
@@ -245,7 +263,7 @@ impl Shell {
             .flatten();
         if !LoginSession::is_redirect(&address) {
             self.sign_in_note = Some((
-                "That’s a different Amazon page. Copy the address of the tab that says it can’t be found.".into(),
+                "That’s a different Amazon page. Copy the address of Amazon’s error page, the one that opened after you signed in.".into(),
                 true,
             ));
             cx.notify();

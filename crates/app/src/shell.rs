@@ -8,6 +8,8 @@ impl Shell {
         let library_search = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search titles, authors or narrators")
         });
+        let sign_in_address =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Paste the address here"));
         let transcript_search = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Search this chapter and chapter names")
@@ -64,6 +66,14 @@ impl Shell {
                     _ => {}
                 },
             ),
+            cx.subscribe(
+                &sign_in_address,
+                |this: &mut Self, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        this.submit_sign_in_address(cx);
+                    }
+                },
+            ),
         ];
         let marketplaces = SearchableVec::new(
             Marketplace::ALL
@@ -101,6 +111,8 @@ impl Shell {
             sign_in_note: None,
             sign_in_watch: 0,
             sign_in_clipboard: None,
+            sign_in_address,
+            sign_in_manual: false,
             connecting_after_sign_in: false,
             search,
             library_search,

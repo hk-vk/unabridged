@@ -38,7 +38,7 @@ use ui::{
     components::{
         BackLink, Button, ButtonShape, ButtonVariant, Chip, ChipStyle, Cover, CoverSize,
         IconButton, Scrubber, ScrubberColors, SearchField, SectionHeader, SegmentedProgress,
-        SidebarHeader, SidebarItem, Toolbar,
+        SidebarHeader, SidebarItem, TextField, Toolbar,
     },
 };
 
@@ -232,6 +232,10 @@ struct Shell {
     sign_in_watch: u64,
     /// Clipboard text when the last check ran, so only new copies count.
     sign_in_clipboard: Option<String>,
+    /// Where the listener pastes Amazon's redirect address by hand.
+    sign_in_address: Entity<InputState>,
+    /// The paste-the-address option is showing.
+    sign_in_manual: bool,
     /// The library is loading right after a sign-in, not a relaunch.
     connecting_after_sign_in: bool,
     search: Entity<InputState>,

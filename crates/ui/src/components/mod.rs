@@ -13,7 +13,7 @@ mod progress;
 
 pub use button::{BackLink, Button, ButtonShape, ButtonVariant, ClickHandler, IconButton};
 pub use chip::{Chip, ChipStyle, KeyHint};
-pub use controls::{GroupedList, ListRow, SearchField, Switch, ToggleHandler};
+pub use controls::{GroupedList, ListRow, SearchField, Switch, TextField, ToggleHandler};
 pub use cover::{Cover, CoverSize};
 pub use menu::MenuTrigger;
 pub use navigation::{

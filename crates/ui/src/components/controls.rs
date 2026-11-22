@@ -139,6 +139,43 @@ impl RenderOnce for SearchField {
     }
 }
 
+/// A plain one-line text field, as wide as its container.
+#[derive(IntoElement)]
+pub struct TextField {
+    input: Entity<InputState>,
+}
+
+impl TextField {
+    /// A field editing `input`.
+    pub fn new(input: &Entity<InputState>) -> Self {
+        Self {
+            input: input.clone(),
+        }
+    }
+}
+
+impl RenderOnce for TextField {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .flex()
+            .items_center()
+            .w_full()
+            .h(px(size::SEARCH_HEIGHT))
+            .px(px(SEARCH_PADDING))
+            .rounded(px(radius::FIELD))
+            .elevation(Elevation::Field, theme, window)
+            .child(
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.input)
+                        .appearance(false)
+                        .text_color(theme.colors.ink)
+                        .type_style(text::BODY),
+                ),
+            )
+    }
+}
+
 /// Horizontal padding of a grouped list row.
 const ROW_PADDING: f32 = 16.0;
 /// Gap between a row's leading element, text and trailing element.
