@@ -36,20 +36,25 @@ static FOREGROUND_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 struct Request<'a> {
     foreground: &'a AtomicUsize,
     prefetch: bool,
+    /// Nobody wants the result any more (read along moved on): stop at the
+    /// next window so a newer request gets the engine.
+    stop: &'a dyn Fn() -> bool,
 }
 
 impl<'a> Request<'a> {
-    fn new(foreground: &'a AtomicUsize, prefetch: bool) -> Self {
+    fn new(foreground: &'a AtomicUsize, prefetch: bool, stop: &'a dyn Fn() -> bool) -> Self {
         if !prefetch {
             foreground.fetch_add(1, Ordering::SeqCst);
         }
         Self {
             foreground,
             prefetch,
+            stop,
         }
     }
 
     fn check(&self) -> Result<()> {
+        ensure!(!(self.stop)(), "Transcription stopped");
         ensure!(
             !self.prefetch || self.foreground.load(Ordering::SeqCst) == 0,
             "Speech prefetch interrupted by foreground transcription"
@@ -252,15 +257,22 @@ pub fn transcribe(
     from: f64,
     to: f64,
     locale: &str,
+    stop: &dyn Fn() -> bool,
     on_line: impl FnMut(Line),
 ) -> Result<Vec<Line>> {
-    let request = Request::new(&FOREGROUND_REQUESTS, false);
+    let request = Request::new(&FOREGROUND_REQUESTS, false, stop);
     transcribe_with_request(path, from, to, locale, on_line, &request)
 }
 
 /// Prefetch only while the engine is idle, yielding between windows to live read along.
-pub fn prefetch(path: &Path, from: f64, to: f64, locale: &str) -> Result<Vec<Line>> {
-    let request = Request::new(&FOREGROUND_REQUESTS, true);
+pub fn prefetch(
+    path: &Path,
+    from: f64,
+    to: f64,
+    locale: &str,
+    stop: &dyn Fn() -> bool,
+) -> Result<Vec<Line>> {
+    let request = Request::new(&FOREGROUND_REQUESTS, true, stop);
     transcribe_with_request(path, from, to, locale, |_| {}, &request)
 }
 
@@ -440,6 +452,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_stopped_request_gives_up() {
+        let foreground = AtomicUsize::new(0);
+        let wanted = std::cell::Cell::new(true);
+        let stop = || !wanted.get();
+        let request = Request::new(&foreground, false, &stop);
+        assert!(request.check().is_ok());
+        wanted.set(false);
+        assert!(request.check().is_err());
+        assert!(request.lock(&Mutex::new(())).is_err());
+    }
+
+    #[test]
     fn only_languages_the_model_handles_are_offered() {
         assert_eq!(language("en-US").unwrap(), "en");
         assert_eq!(language("yue-CN").unwrap(), "zh");
@@ -467,7 +491,7 @@ mod tests {
     fn prefetch_runs_only_when_idle() {
         let foreground = AtomicUsize::new(0);
         let context = Mutex::new(());
-        let prefetch = Request::new(&foreground, true);
+        let prefetch = Request::new(&foreground, true, &|| false);
         assert!(prefetch.check().is_ok());
         drop(prefetch.lock(&context).unwrap());
 
@@ -475,8 +499,8 @@ mod tests {
         assert!(prefetch.lock(&context).is_err());
         drop(guard);
 
-        let first = Request::new(&foreground, false);
-        let second = Request::new(&foreground, false);
+        let first = Request::new(&foreground, false, &|| false);
+        let second = Request::new(&foreground, false, &|| false);
         assert!(prefetch.lock(&context).is_err());
         assert!(first.lock(&context).is_ok());
         drop(first);
@@ -489,14 +513,14 @@ mod tests {
     fn prefetch_yields_at_next_window_to_waiting_foreground() {
         let foreground = AtomicUsize::new(0);
         let context = Mutex::new(());
-        let prefetch = Request::new(&foreground, true);
+        let prefetch = Request::new(&foreground, true, &|| false);
         std::thread::scope(|scope| {
             let guard = prefetch.lock(&context).unwrap();
             let (started, waiting) = std::sync::mpsc::channel();
             let foreground = &foreground;
             let context = &context;
             let worker = scope.spawn(move || {
-                let request = Request::new(foreground, false);
+                let request = Request::new(foreground, false, &|| false);
                 started.send(()).unwrap();
                 let _guard = request.lock(context).unwrap();
                 assert!(request.check().is_ok());
@@ -556,8 +580,8 @@ mod tests {
     fn invalid_ranges_and_missing_audio() {
         let path = Path::new("missing-readalong-test-audio.m4a");
         for (from, to) in [(0., 0.), (-1., 2.), (f64::NAN, 2.), (0., f64::INFINITY)] {
-            assert!(transcribe(path, from, to, "en-US", |_| {}).is_err());
+            assert!(transcribe(path, from, to, "en-US", &|| false, |_| {}).is_err());
         }
-        assert!(transcribe(path, 0., 10., "en-US", |_| {}).is_err());
+        assert!(transcribe(path, 0., 10., "en-US", &|| false, |_| {}).is_err());
     }
 }

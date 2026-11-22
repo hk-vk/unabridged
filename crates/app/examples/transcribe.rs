@@ -40,9 +40,16 @@ fn run() -> anyhow::Result<()> {
         }
     })?;
     let start = std::time::Instant::now();
-    let lines = whisper::transcribe(std::path::Path::new(&args[0]), from, to, &args[3], |line| {
-        println!("[{:.2} - {:.2}] {}", line.start, line.end, line.text);
-    })?;
+    let lines = whisper::transcribe(
+        std::path::Path::new(&args[0]),
+        from,
+        to,
+        &args[3],
+        &|| false,
+        |line| {
+            println!("[{:.2} - {:.2}] {}", line.start, line.end, line.text);
+        },
+    )?;
     let elapsed = start.elapsed().as_secs_f64();
     eprintln!(
         "{} lines; {:.2}s audio in {elapsed:.2}s; realtime factor {:.3}",

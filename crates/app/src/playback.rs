@@ -38,11 +38,13 @@ impl Shell {
     }
 
     pub(crate) fn sync_position(&self, cx: &mut Context<Self>) {
-        // Until the audio connects, the place is only an estimate.
+        // Until the audio connects, the place is only an estimate; once it
+        // has failed, the place it reports can't be trusted either. Playing
+        // saved it every 30 seconds and on pause.
         let Some(active) = self
             .player
             .as_ref()
-            .filter(|active| active.player.is_ready())
+            .filter(|active| active.player.is_ready() && !active.player.failed())
         else {
             return;
         };
@@ -85,7 +87,17 @@ impl Shell {
         start_at: Option<u64>,
         cx: &mut Context<Self>,
     ) {
-        if self.player.as_ref().is_some_and(|p| p.asin == asin) {
+        // A book whose audio failed opens again, from where it got to.
+        let retry = self
+            .player
+            .as_ref()
+            .filter(|p| p.asin == asin && p.player.failed());
+        let start_at = start_at.or_else(|| {
+            retry
+                .filter(|p| p.player.is_ready())
+                .map(|p| (p.player.position().max(0.) * 1000.) as u64)
+        });
+        if retry.is_none() && self.player.as_ref().is_some_and(|p| p.asin == asin) {
             if let Some(active) = &mut self.player {
                 if let Some(position) = start_at {
                     active.player.seek(position as f64 / 1000.);
@@ -257,6 +269,14 @@ impl Shell {
                 active.player.pause();
                 active.was_playing = false;
                 self.sync_position(cx);
+            } else if active.player.failed() {
+                let (key, asin, title) = (
+                    active.account_key.clone(),
+                    active.asin.clone(),
+                    active.title.clone(),
+                );
+                self.start_player(key, asin, title, cx);
+                return;
             } else if let Err(error) = active.player.play() {
                 self.download_notice = Some(format!("Could not resume playback: {error}"));
             } else {
@@ -548,6 +568,15 @@ impl PlayerSlot {
         match &self.audio {
             Some(audio) => audio.is_buffering(),
             None => self.wants_play.get() && self.error.is_none(),
+        }
+    }
+
+    /// The audio can't play: it failed to open, or the item failed. A
+    /// stream waiting on reads that fail isn't failed; it's retried.
+    pub(crate) fn failed(&self) -> bool {
+        match &self.audio {
+            Some(audio) => audio.error().is_some() && !audio.is_playing(),
+            None => self.error.is_some(),
         }
     }
 
@@ -952,5 +981,22 @@ impl Follow {
         } else {
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_slot_says_so_and_refuses_to_play() {
+        let mut slot = PlayerSlot::loading(3600., 7200., 1., 1.);
+        assert!(!slot.failed());
+        slot.fail("network is down".into());
+        // start_player_at and toggle_playback reopen a failed book; before,
+        // they called play(), which only repeated the error.
+        assert!(slot.failed());
+        assert!(slot.play().is_err());
+        assert!(!slot.is_ready(), "a failed open never syncs its estimate");
     }
 }
