@@ -177,8 +177,8 @@ impl Shell {
             .into_any_element()
     }
 
-    /// Resumes a book from a shelf: toggles it when it is in the player, plays
-    /// it when it is on this Mac, otherwise downloads it.
+    /// Resumes a book from a shelf: toggles it when it is in the player,
+    /// otherwise plays it (from this Mac, or streamed).
     fn resume_book(
         &mut self,
         key: String,
@@ -192,15 +192,71 @@ impl Shell {
             .is_some_and(|player| player.asin == asin)
         {
             self.toggle_playback(cx);
-        } else if backend::downloaded_path(&key, &asin).is_some() {
+        } else {
             self.start_player(key, asin, title, cx);
-        } else if self.download.is_none() {
-            self.download(key, asin, title, cx);
         }
     }
 
-    /// The resume action for a book: open the player when it is playing, play
-    /// when it is on this Mac, otherwise download it.
+    /// The small download control beside a book's play button: a download
+    /// icon, the download's progress, or nothing once it's on this Mac.
+    pub(crate) fn download_icon(
+        &self,
+        id: &str,
+        key: &str,
+        asin: &audible::Asin,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui_kit::AnyElement> {
+        let colors = cx.theme().colors;
+        if let Some(download) = &self.download
+            && &download.asin == asin
+        {
+            let label = download
+                .event
+                .lock()
+                .map(|event| {
+                    let (stage, _, fraction) = download_display(*event);
+                    fraction.map_or_else(
+                        || format!("{stage}…"),
+                        |fraction| format!("{stage} {:.0}%", fraction * 100.),
+                    )
+                })
+                .unwrap_or_else(|_| "Downloading…".into());
+            return Some(
+                div()
+                    .type_style(ui::text::CAPTION.tabular())
+                    .text_color(colors.ink_secondary)
+                    .child(label)
+                    .into_any_element(),
+            );
+        }
+
+        if backend::downloaded_path(key, asin).is_some() {
+            return None;
+        }
+        let button = IconButton::new(format!("{id}-download"), Icon::Download, 16.)
+            .hit_area(30.)
+            .hover_fill(colors.fill);
+        Some(if self.download.is_some() {
+            button
+                .color(colors.ink_secondary)
+                .tooltip("Another download is in progress")
+                .into_any_element()
+        } else {
+            let (key, asin, title) = (key.to_string(), asin.clone(), title.to_string());
+            button
+                .color(colors.ink)
+                .tooltip("Download to this Mac")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.download(key.clone(), asin.clone(), title.clone(), cx)
+                }))
+                .into_any_element()
+        })
+    }
+
+    /// The resume action for a book: pause or play when it's in the player,
+    /// otherwise play it (from this Mac, or streamed), with the small
+    /// download icon beside it.
     pub(crate) fn resume_action(
         &self,
         id: &str,
@@ -217,19 +273,8 @@ impl Shell {
         let asin = item.asin.clone();
         let key = account_key.to_string();
         let title = item.title.clone().unwrap_or_else(|| "Untitled".into());
-        let muted = cx.theme().colors.ink_secondary;
-        if self
-            .download
-            .as_ref()
-            .is_some_and(|download| download.asin == asin)
-        {
-            return div()
-                .type_style(ui::text::BODY)
-                .text_color(muted)
-                .child("Downloading…")
-                .into_any_element();
-        }
-        if self
+        let download = self.download_icon(id, &key, &asin, &title, cx);
+        let button = if self
             .player
             .as_ref()
             .is_some_and(|player| player.asin == asin)
@@ -238,36 +283,27 @@ impl Shell {
                 .player
                 .as_ref()
                 .is_some_and(|player| player.player.is_playing());
-            return Button::new(format!("{id}-player"))
+            Button::new(format!("{id}-player"))
                 .label(if playing { "Pause" } else { "Play" })
                 .icon(if playing { Icon::Pause } else { Icon::Play })
                 .variant(variant)
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx)))
-                .into_any_element();
-        }
-        if backend::downloaded_path(&key, &asin).is_some() {
-            return Button::new(format!("{id}-resume"))
-                .label("Resume")
+        } else {
+            let started = book_progress(item).unwrap_or(0.) > 0. && !book_finished(item);
+            Button::new(format!("{id}-resume"))
+                .label(if started { "Resume" } else { "Play" })
                 .icon(Icon::Play)
                 .variant(variant)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.start_player(key.clone(), asin.clone(), title.clone(), cx)
                 }))
-                .into_any_element();
-        }
-        if self.download.is_some() {
-            return IconButton::new(format!("{id}-download"), Icon::Download, 16.)
-                .hit_area(30.)
-                .tooltip("Another download is in progress")
-                .into_any_element();
-        }
-        Button::new(format!("{id}-download"))
-            .label("Download")
-            .icon(Icon::Download)
-            .variant(variant)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.download(key.clone(), asin.clone(), title.clone(), cx)
-            }))
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .children(download)
+            .child(button)
             .into_any_element()
     }
 

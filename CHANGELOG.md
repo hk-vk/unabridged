@@ -2,6 +2,11 @@
 
 What changed in each release of Unabridged. The release workflow copies a version's section into its GitHub release notes, so add one before tagging.
 
+## Unreleased
+
+- **Stream any book.** Play starts a book straight away without downloading it first. Downloading is now optional: a small download icon next to Play saves the book for offline listening. Recently streamed parts are cached, so going back over a stretch doesn't fetch it again.
+- **Read along on streamed books.** Read along fetches the chapter you're in, then transcribes it as before.
+
 ## 0.1.0
 
 The first public release: a native Mac app for your Audible library.

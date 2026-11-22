@@ -118,6 +118,16 @@ impl<'a> Cursor<'a> {
         Ok(s)
     }
 
+    /// Fail unless `count` items of `size` bytes remain (guards
+    /// preallocation against corrupt counts).
+    fn ensure(&self, count: usize, size: usize) -> Result<()> {
+        let need = count.checked_mul(size);
+        match need {
+            Some(n) if self.pos + n <= self.buf.len() => Ok(()),
+            _ => Err(Error::InvalidMedia("sample table is truncated".into())),
+        }
+    }
+
     fn u32(&mut self) -> Result<u32> {
         let b = self.take(4)?;
         Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
@@ -173,6 +183,67 @@ pub(crate) struct Layout {
     pub ftyp_payload: Vec<u8>,
     /// Encrypted audio tracks.
     pub tracks: Vec<EncryptedTrack>,
+    /// Timing and samples of the first sound track (encrypted or plain),
+    /// when its tables could be read. Only the streaming engine uses it.
+    pub sound: Option<SoundTrack>,
+}
+
+impl Layout {
+    /// Sample chunks of the first sound track (empty when unknown).
+    pub fn sound_chunks(&self) -> &[Chunk] {
+        match self.sound.as_ref().map(|s| &s.samples) {
+            Some(SoundSamples::Encrypted(i)) => self.tracks.get(*i).map_or(&[], |t| &t.chunks),
+            Some(SoundSamples::Plain(chunks)) => chunks,
+            None => &[],
+        }
+    }
+}
+
+/// Timing of the first sound track.
+#[derive(Debug, Clone)]
+pub(crate) struct SoundTrack {
+    /// `mdhd` timescale (units per second).
+    pub timescale: u32,
+    /// `mdhd` duration in timescale units.
+    pub duration: u64,
+    /// `stts` runs: (sample count, sample delta).
+    pub stts: Vec<(u32, u32)>,
+    /// Where the track's sample layout lives.
+    pub samples: SoundSamples,
+}
+
+/// Where a sound track's sample layout lives.
+#[derive(Debug, Clone)]
+pub(crate) enum SoundSamples {
+    /// The track is `Layout::tracks[i]`.
+    Encrypted(usize),
+    /// A plain (`mp4a` etc.) track.
+    Plain(Vec<Chunk>),
+}
+
+/// Parse the top-level box header at `pos` from `head`, which holds the file
+/// bytes from `pos` (at least 8, ideally 16). `file_len` bounds the box.
+pub(crate) fn top_header(head: &[u8], pos: u64, file_len: u64) -> Result<BoxHeader> {
+    header_at(head, 0, pos, file_len)
+}
+
+/// Check the top-level boxes of a file and return its `moov`.
+pub(crate) fn find_moov(top: &[BoxHeader]) -> Result<BoxHeader> {
+    if find(top, b"moof").is_some() {
+        return Err(Error::InvalidMedia(
+            "fragmented MP4 is not supported".into(),
+        ));
+    }
+    let moov = require(top, b"moov", "file")?;
+    if moov.size > MAX_MOOV {
+        return Err(Error::InvalidMedia("moov box is implausibly large".into()));
+    }
+    Ok(moov)
+}
+
+/// The `ftyp` box among the top-level boxes, if any.
+pub(crate) fn find_ftyp(top: &[BoxHeader]) -> Option<BoxHeader> {
+    find(top, b"ftyp")
 }
 
 /// Parse a file's layout.
@@ -185,27 +256,32 @@ pub(crate) fn parse(file: &mut File) -> Result<Layout> {
         file.seek(SeekFrom::Start(pos))?;
         let n = (file_len - pos).min(16) as usize;
         file.read_exact(&mut head[..n])?;
-        let h = header_at(&head[..n], 0, pos, file_len)?;
+        let h = top_header(&head[..n], pos, file_len)?;
         pos = h.end();
         top.push(h);
     }
-    if find(&top, b"moof").is_some() {
-        return Err(Error::InvalidMedia(
-            "fragmented MP4 is not supported".into(),
-        ));
-    }
-    let moov = require(&top, b"moov", "file")?;
-    if moov.size > MAX_MOOV {
-        return Err(Error::InvalidMedia("moov box is implausibly large".into()));
-    }
+    let moov = find_moov(&top)?;
     let moov_buf = read_range(file, moov.start, moov.size)?;
-    let base = moov.start;
-
-    let ftyp = find(&top, b"ftyp");
-    let ftyp_payload = match ftyp {
+    let ftyp_payload = match find_ftyp(&top) {
         Some(f) => read_range(file, f.payload_start(), f.size - f.header_len)?,
         None => Vec::new(),
     };
+    parse_moov(&top, &moov_buf, ftyp_payload)
+}
+
+/// Parse the layout from in-memory boxes: the top-level headers, the whole
+/// `moov` box (header included) and the `ftyp` payload.
+pub(crate) fn parse_moov(
+    top: &[BoxHeader],
+    moov_buf: &[u8],
+    ftyp_payload: Vec<u8>,
+) -> Result<Layout> {
+    let moov = find_moov(top)?;
+    if moov_buf.len() as u64 != moov.size {
+        return Err(Error::InvalidMedia("moov buffer has the wrong size".into()));
+    }
+    let base = moov.start;
+    let ftyp = find_ftyp(top);
 
     let slice = |h: &BoxHeader| -> &[u8] {
         let s = (h.payload_start() - base) as usize;
@@ -214,45 +290,94 @@ pub(crate) fn parse(file: &mut File) -> Result<Layout> {
     };
 
     let mut tracks = Vec::new();
-    for trak in children(&moov_buf, base, moov.payload_start(), moov.end())?
+    let mut sound = None;
+    for trak in children(moov_buf, base, moov.payload_start(), moov.end())?
         .into_iter()
         .filter(|b| &b.kind == b"trak")
     {
         let mdia = require(
-            &children(&moov_buf, base, trak.payload_start(), trak.end())?,
+            &children(moov_buf, base, trak.payload_start(), trak.end())?,
             b"mdia",
             "trak",
         )?;
-        let mdia_kids = children(&moov_buf, base, mdia.payload_start(), mdia.end())?;
+        let mdia_kids = children(moov_buf, base, mdia.payload_start(), mdia.end())?;
+        // hdlr: version/flags (4), pre_defined (4), handler type (4).
+        let handler = find(&mdia_kids, b"hdlr").and_then(|h| slice(&h).get(8..12));
         let Some(minf) = find(&mdia_kids, b"minf") else {
             continue;
         };
-        let minf_kids = children(&moov_buf, base, minf.payload_start(), minf.end())?;
+        let minf_kids = children(moov_buf, base, minf.payload_start(), minf.end())?;
         let Some(stbl) = find(&minf_kids, b"stbl") else {
             continue;
         };
-        let stbl_kids = children(&moov_buf, base, stbl.payload_start(), stbl.end())?;
+        let stbl_kids = children(moov_buf, base, stbl.payload_start(), stbl.end())?;
         let stsd = require(&stbl_kids, b"stsd", "stbl")?;
         // stsd: version/flags (4) + entry count (4), then entries.
-        let entries = children(&moov_buf, base, stsd.payload_start() + 8, stsd.end())?;
-        let Some(entry) = entries.first().copied().filter(|e| &e.kind == b"aavd") else {
-            continue;
-        };
-        let entry_children = sample_entry_children(&moov_buf, base, &entry)?;
-        let adrm = find(&entry_children, b"adrm").map(|a| slice(&a).to_vec());
-        let chunks = sample_chunks(&stbl_kids, slice)?;
-        tracks.push(EncryptedTrack {
-            sample_entry: entry,
-            entry_children,
-            adrm,
-            ancestors: vec![moov, trak, mdia, minf, stbl, stsd],
-            chunks,
-        });
+        let entries = children(moov_buf, base, stsd.payload_start() + 8, stsd.end())?;
+        let entry = entries.first().copied();
+        let is_sound = handler == Some(b"soun".as_slice())
+            || entry.is_some_and(|e| &e.kind == b"aavd" || &e.kind == b"mp4a");
+        let mut encrypted_index = None;
+        if let Some(entry) = entry.filter(|e| &e.kind == b"aavd") {
+            let entry_children = sample_entry_children(moov_buf, base, &entry)?;
+            let adrm = find(&entry_children, b"adrm").map(|a| slice(&a).to_vec());
+            let chunks = sample_chunks(&stbl_kids, slice)?;
+            encrypted_index = Some(tracks.len());
+            tracks.push(EncryptedTrack {
+                sample_entry: entry,
+                entry_children,
+                adrm,
+                ancestors: vec![moov, trak, mdia, minf, stbl, stsd],
+                chunks,
+            });
+        }
+        if is_sound && sound.is_none() {
+            // Timing is optional extra information: a track whose tables we
+            // cannot read is simply left without it.
+            sound = sound_track(&mdia_kids, &stbl_kids, slice, encrypted_index);
+        }
     }
     Ok(Layout {
         ftyp,
         ftyp_payload,
         tracks,
+        sound,
+    })
+}
+
+/// Timing (mdhd, stts) and, for plain tracks, the sample layout.
+fn sound_track<'a>(
+    mdia: &[BoxHeader],
+    stbl: &[BoxHeader],
+    slice: impl Fn(&BoxHeader) -> &'a [u8] + Copy,
+    encrypted_index: Option<usize>,
+) -> Option<SoundTrack> {
+    let mut c = Cursor::new(slice(&find(mdia, b"mdhd")?));
+    let version = c.take(4).ok()?[0];
+    let (timescale, duration) = if version == 1 {
+        c.take(16).ok()?;
+        (c.u32().ok()?, c.u64().ok()?)
+    } else {
+        c.take(8).ok()?;
+        (c.u32().ok()?, u64::from(c.u32().ok()?))
+    };
+    let mut c = Cursor::new(slice(&find(stbl, b"stts")?));
+    c.take(4).ok()?;
+    let n = c.u32().ok()? as usize;
+    c.ensure(n, 8).ok()?;
+    let stts = (0..n)
+        .map(|_| Ok((c.u32()?, c.u32()?)))
+        .collect::<Result<Vec<_>>>()
+        .ok()?;
+    let samples = match encrypted_index {
+        Some(i) => SoundSamples::Encrypted(i),
+        None => SoundSamples::Plain(sample_chunks(stbl, slice).ok()?),
+    };
+    Some(SoundTrack {
+        timescale,
+        duration,
+        stts,
+        samples,
     })
 }
 
@@ -290,6 +415,7 @@ fn sample_chunks<'a>(
     let uniform = c.u32()?;
     let count = c.u32()? as usize;
     let sizes: Vec<u32> = if uniform == 0 {
+        c.ensure(count, 4)?;
         (0..count).map(|_| c.u32()).collect::<Result<_>>()?
     } else {
         vec![uniform; count]
@@ -300,6 +426,7 @@ fn sample_chunks<'a>(
         let mut c = Cursor::new(slice(&stco));
         c.take(4)?;
         let n = c.u32()? as usize;
+        c.ensure(n, 4)?;
         (0..n)
             .map(|_| c.u32().map(u64::from))
             .collect::<Result<_>>()?
@@ -308,6 +435,7 @@ fn sample_chunks<'a>(
         let mut c = Cursor::new(slice(&co64));
         c.take(4)?;
         let n = c.u32()? as usize;
+        c.ensure(n, 8)?;
         (0..n).map(|_| c.u64()).collect::<Result<_>>()?
     };
 
@@ -316,6 +444,7 @@ fn sample_chunks<'a>(
     let mut c = Cursor::new(slice(&stsc));
     c.take(4)?;
     let n = c.u32()? as usize;
+    c.ensure(n, 12)?;
     let mut runs = Vec::with_capacity(n);
     for _ in 0..n {
         let first = c.u32()?;

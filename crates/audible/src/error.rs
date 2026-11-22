@@ -27,6 +27,16 @@ pub enum Error {
         message: String,
     },
 
+    /// The pre-signed CDN URL of a license was rejected (HTTP 401, 403 or
+    /// 410), almost always because it expired. Request a new license and
+    /// hand its URL to [`crate::StreamSource::set_url`]; signing in again is
+    /// not needed.
+    #[error("the download URL expired or was rejected (HTTP {status})")]
+    UrlExpired {
+        /// HTTP status code.
+        status: u16,
+    },
+
     /// The requested resource does not exist (HTTP 404).
     #[error("not found: {message}")]
     NotFound {

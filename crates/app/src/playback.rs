@@ -96,9 +96,9 @@ impl Shell {
             cx.notify();
             return;
         }
-        let Some(path) = backend::downloaded_path(&key, &asin) else {
-            return;
-        };
+        // A downloaded book plays from this Mac; any other streams from
+        // Audible.
+        let local = backend::downloaded_path(&key, &asin);
         if let Some(active) = &self.player {
             active.player.pause();
             self.sync_position(cx);
@@ -106,21 +106,43 @@ impl Shell {
         self.loading_player = true;
         self.download_notice = Some(format!("Loading {title}…"));
         cx.notify();
+        let quality = self.prefs.download_quality;
         cx.spawn(async move |this, cx| {
-            let result = if let Some(position) = start_at {
-                Ok(Some(position))
-            } else {
-                cx.background_spawn({
+            let streaming = local.is_none();
+            let prepared = cx
+                .background_spawn({
                     let asin = asin.clone();
                     let key = key.clone();
-                    async move { backend::position(&key, &asin) }
+                    async move {
+                        let position = match start_at {
+                            Some(position) => Some(position),
+                            None => backend::position(&key, &asin)?,
+                        };
+                        let stream = match local {
+                            Some(path) => Source::File(path),
+                            None => Source::Stream(streaming::Stream::open(&key, &asin, quality)?),
+                        };
+                        anyhow::Ok((position, stream))
+                    }
                 })
-                .await
-            };
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.loading_player = false;
-                match result.and_then(|position| {
-                    let player = player::Player::open(&path)?;
+                let mut stream = None;
+                match prepared.and_then(|(position, source)| {
+                    let player = match source {
+                        Source::File(path) => player::Player::open(&path)?,
+                        Source::Stream(source) => {
+                            let player = player::Player::open_stream(
+                                source.clone(),
+                                source.len(),
+                                source.content_type(),
+                                source.duration(),
+                            )?;
+                            stream = Some(source);
+                            player
+                        }
+                    };
                     if let Some(speed) = this.prefs.speed {
                         player.set_rate(speed);
                     }
@@ -144,10 +166,17 @@ impl Shell {
                             was_playing: true,
                             chapters: Vec::new(),
                             chapters_loading: true,
+                            stream,
+                            stall: None,
                         });
                         this.load_chapters(cx);
                         this.download_notice = cancelled_timer.then(|| "Chapter sleep timer turned off when you changed books.".into());
                         this.open_player(cx);
+                    }
+                    Err(error) if streaming => {
+                        this.download_notice = Some(format!(
+                            "Couldn’t stream {title}: {error}. Check your connection, or download the book to listen offline."
+                        ))
                     }
                     Err(error) => {
                         this.download_notice = Some(format!("Could not start playback: {error}"))
@@ -157,6 +186,47 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// AVPlayer doesn't retry a stream read that failed (the network
+    /// dropped), so a stalled stream is opened again where it was: after 5
+    /// seconds, then waiting twice as long each time, up to a minute.
+    pub(crate) fn recover_stream(&mut self, cx: &mut Context<Self>) {
+        let Some(active) = &mut self.player else {
+            return;
+        };
+        let Some(source) = active.stream.clone() else {
+            return;
+        };
+        let stalled = active.player.error().is_some() && active.player.is_playing();
+        if !stalled {
+            // Keep the back-off until audio actually flows again.
+            if !active.player.is_buffering() {
+                active.stall = None;
+            }
+            return;
+        }
+        let now = std::time::Instant::now();
+        let (since, attempts) = *active.stall.get_or_insert((now, 0));
+        let wait = std::time::Duration::from_secs((5u64 << attempts.min(4)).min(60));
+        if now.duration_since(since) < wait {
+            return;
+        }
+        active.stall = Some((now, attempts + 1));
+        if let Ok(player) = player::Player::open_stream(
+            source.clone(),
+            source.len(),
+            source.content_type(),
+            source.duration(),
+        ) {
+            player.set_rate(active.player.rate());
+            player.set_volume(active.player.volume());
+            player.seek(active.player.position());
+            if player.play().is_ok() {
+                active.player = player;
+                cx.notify();
+            }
+        }
     }
 
     pub(crate) fn toggle_playback(&mut self, cx: &mut Context<Self>) {
@@ -327,7 +397,18 @@ impl Shell {
     }
 }
 
+/// Where a book's audio comes from.
+enum Source {
+    File(std::path::PathBuf),
+    Stream(std::sync::Arc<streaming::Stream>),
+}
+
 impl ActivePlayer {
+    /// Whether the book plays from Audible rather than a download.
+    pub(crate) fn is_streaming(&self) -> bool {
+        self.stream.is_some()
+    }
+
     /// The current chapter's timeline, or the whole book's.
     pub(crate) fn timeline(&self) -> Timeline {
         Timeline::chapter(
@@ -377,7 +458,12 @@ impl Shell {
         {
             return;
         }
-        let Some(audio) = backend::downloaded_path(&active.account_key, &active.asin) else {
+        // A download if there is one; otherwise the stream's cache, which
+        // read along fills with the chapter before transcribing it.
+        let local = backend::downloaded_path(&active.account_key, &active.asin);
+        let stream = local.is_none().then(|| active.stream.clone()).flatten();
+        let Some(audio) = local.or_else(|| stream.as_ref().map(|s| s.cache_path().to_path_buf()))
+        else {
             return;
         };
         let (language, marketplace) = match &self.account {
@@ -414,6 +500,7 @@ impl Shell {
             start,
             end,
             locale,
+            stream: stream.clone(),
         };
         let next = active
             .chapters

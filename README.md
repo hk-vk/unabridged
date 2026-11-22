@@ -51,8 +51,8 @@ apps.
 **See where you are.** Progress on every cover, and every book in progress with
 what's left and where you last listened.
 
-**Offline and in sync.** Download books to your Mac, and pick up where you left
-off on your phone.
+**Stream or download.** Play any book straight away, or download it to listen
+offline. Either way, pick up where you left off on your phone.
 
 <table>
   <tr>

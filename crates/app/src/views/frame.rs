@@ -154,7 +154,17 @@ impl Shell {
             let elapsed = model::format::clock(timeline.elapsed());
             let remaining = model::format::countdown(timeline.remaining());
             let speed = active.player.rate();
-            let subtitle = timeline.chapter_name().unwrap_or("Now playing").to_string();
+            let subtitle = if active.player.is_buffering() {
+                "Buffering…".to_string()
+            } else {
+                timeline.chapter_name().unwrap_or("Now playing").to_string()
+            };
+            let download = active
+                .is_streaming()
+                .then(|| {
+                    self.download_icon("bar", &active.account_key, &active.asin, &active.title, cx)
+                })
+                .flatten();
             let sleeping = !matches!(self.sleep, SleepTimer::Off);
             let sleep_tip = if sleeping {
                 self.sleep.label(std::time::Instant::now())
@@ -326,6 +336,7 @@ impl Shell {
                                 cx,
                             ),
                         )
+                        .children(download)
                         .children((!compact_bar).then(|| {
                             IconButton::new("bar-mini", Icon::Pip, 16.)
                                 .hit_area(28.)

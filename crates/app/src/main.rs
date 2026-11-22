@@ -8,6 +8,7 @@ mod playback;
 mod player;
 mod region;
 mod shell;
+mod streaming;
 #[cfg(debug_assertions)]
 mod tour;
 mod transcript;
@@ -152,6 +153,11 @@ struct ActivePlayer {
     was_playing: bool,
     chapters: Vec<audible::models::Chapter>,
     chapters_loading: bool,
+    /// Set when the book plays from Audible instead of a download.
+    stream: Option<std::sync::Arc<streaming::Stream>>,
+    /// When the stream stalled on a failed read, and how many times it has
+    /// been reopened since.
+    stall: Option<(std::time::Instant, u32)>,
 }
 
 /// The read-along transcript for the chapter on screen.
@@ -291,6 +297,8 @@ fn smoke_open_mini(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App)
                 was_playing: false,
                 chapters: Vec::new(),
                 chapters_loading: false,
+                stream: None,
+                stall: None,
             });
             shell.open_player(cx);
             shell.open_mini_player(cx);

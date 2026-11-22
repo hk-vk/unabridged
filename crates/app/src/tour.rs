@@ -91,6 +91,8 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
                 was_playing: true,
                 chapters: Vec::new(),
                 chapters_loading: false,
+                stream: None,
+                stall: None,
             });
             shell.open_player(cx);
             Ok::<_, anyhow::Error>(())

@@ -712,7 +712,9 @@ pub(crate) fn read_along_list(
             .child(chip)
             .into_any_element()
     };
-    if backend::downloaded_path(&active.account_key, &active.asin).is_none() {
+    if !active.is_streaming()
+        && backend::downloaded_path(&active.account_key, &active.asin).is_none()
+    {
         // Read along needs the audio on this Mac; offer the download here
         // and start transcribing once it lands.
         return match &shell.download {
@@ -795,6 +797,27 @@ pub(crate) fn read_along_list(
                         .child(format!(
                             "Adding {} speech… {:.0}%",
                             transcript::speech_name(read.locale),
+                            progress * 100.
+                        )),
+                )
+                .child(
+                    SegmentedProgress::new(0., *progress, 0.)
+                        .colors(palette.on_field, palette.on_field_track),
+                )
+                .into_any_element();
+        }
+        transcript::Phase::Fetching(progress) if job.lines.is_empty() => {
+            return div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .w(px(if mini { 240. } else { 280. }))
+                .child(
+                    div()
+                        .type_style(ui::text::CAPTION.tabular())
+                        .text_color(palette.on_field_muted)
+                        .child(format!(
+                            "Getting this chapter ready… {:.0}%",
                             progress * 100.
                         )),
                 )

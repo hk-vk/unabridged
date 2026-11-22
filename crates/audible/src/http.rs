@@ -56,7 +56,7 @@ impl RetryPolicy {
         }
     }
 
-    fn backoff(&self, retry: u32) -> Duration {
+    pub(crate) fn backoff(&self, retry: u32) -> Duration {
         let factor = 2u32.saturating_pow(retry.saturating_sub(1));
         self.base_delay.saturating_mul(factor).min(self.max_delay)
     }

@@ -13,11 +13,11 @@
 //! Widevine/DASH titles are not supported; the license step reports them as
 //! [`crate::Error::UnsupportedDrm`].
 
-mod aax;
+pub(crate) mod aax;
 pub(crate) mod convert;
 mod decrypter;
 mod keys;
-mod mp4;
+pub(crate) mod mp4;
 
 pub use decrypter::{Decrypter, FfmpegDecrypter, NativeDecrypter};
 pub use keys::{ActivationBytes, DecryptionKey};

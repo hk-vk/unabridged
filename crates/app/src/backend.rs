@@ -398,6 +398,11 @@ pub fn remove_download(key: &str, asin: &audible::Asin) -> anyhow::Result<u64> {
     Ok(freed)
 }
 
+/// The signed-in client, for work that needs its own runtime (streaming).
+pub(crate) fn client() -> anyhow::Result<Audible> {
+    Audible::from_store(store()?, PROFILE)?.ok_or_else(|| anyhow::anyhow!("Sign in to play books"))
+}
+
 pub fn download(
     key: &str,
     asin: audible::Asin,
@@ -417,7 +422,10 @@ pub fn download(
             *current = event;
         }
     }));
-    Ok(rt.block_on(client.download_book(request))?.path)
+    let asin = request.asin.clone();
+    let path = rt.block_on(client.download_book(request))?.path;
+    crate::streaming::forget(key, &asin);
+    Ok(path)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -916,7 +924,7 @@ impl DownloadQuality {
         }
     }
 
-    fn audible(self) -> audible::models::Quality {
+    pub(crate) fn audible(self) -> audible::models::Quality {
         match self {
             Self::High => audible::models::Quality::High,
             Self::Standard => audible::models::Quality::Normal,

@@ -60,7 +60,10 @@ pub(crate) fn decrypt_file(
     }
 }
 
-fn track_key(track: &mp4::EncryptedTrack, key: &DecryptionKey) -> Result<([u8; 16], [u8; 16])> {
+pub(crate) fn track_key(
+    track: &mp4::EncryptedTrack,
+    key: &DecryptionKey,
+) -> Result<([u8; 16], [u8; 16])> {
     match key {
         DecryptionKey::Aaxc { key, iv } => Ok((*key, *iv)),
         DecryptionKey::Aax(ab) => {
