@@ -18,6 +18,10 @@
   <a href="#build-from-source">Build from source</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/sponsors/hk-vk"><img src="https://img.shields.io/github/sponsors/hk-vk?label=Sponsor&logo=GitHub&color=ea4aaa" alt="Sponsor on GitHub"></a>
+</p>
+
 ```sh
 brew install --cask hk-vk/tap/unabridged
 ```
