@@ -152,7 +152,13 @@ impl Shell {
                 cx.open_url(url.as_str());
                 self.account = Account::SigningIn(Box::new(session));
                 self.sign_in_note = None;
-                self.sign_in_manual = false;
+                // Elsewhere the app can't read browser tabs, so the paste
+                // option shows from the start.
+                self.sign_in_manual = cfg!(not(target_os = "macos"));
+                #[cfg(not(target_os = "macos"))]
+                {
+                    self.sign_in_note = Some(("When the page says it can’t be found, press Ctrl+L then Ctrl+C to copy its address.".into(), false));
+                }
                 self.watch_sign_in(cx);
             }
             Err(error) => self.account = Account::Error(error.to_string()),
@@ -212,10 +218,12 @@ impl Shell {
                             return false;
                         }
                         match scan {
+                            #[cfg(target_os = "macos")]
                             browser_tab::Scan::Found(url) => {
                                 this.connect_sign_in(url, cx);
                                 return false;
                             }
+                            #[cfg(target_os = "macos")]
                             browser_tab::Scan::Denied if this.sign_in_note.is_none() => {
                                 // It can't continue by itself: show the
                                 // paste option straight away.
@@ -576,7 +584,7 @@ impl Shell {
             let _ = this.update(cx, |this, cx| {
                 this.download = None;
                 this.download_notice = Some(match result {
-                    Ok(_) => format!("{title} is downloaded to this Mac."),
+                    Ok(_) => format!("{title} {}", device_copy("is downloaded to this Mac.")),
                     Err(error) => format!("Download failed: {error}"),
                 });
                 cx.notify();
@@ -633,7 +641,7 @@ impl Shell {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.download_notice = Some(match result {
-                    Ok(()) if add => "Bookmark saved on this Mac.".into(),
+                    Ok(()) if add => device_copy("Bookmark saved on this Mac."),
                     Ok(()) => "Bookmark removed.".into(),
                     Err(error) => format!("Could not save bookmark: {error}"),
                 });

@@ -241,15 +241,14 @@ impl Shell {
             .child(self.resume_action("book", &library.account_key, item, true, cx))
             .children(local_path.map(|path| {
                 Button::new("book-reveal")
-                    .label("Show in Finder")
+                    .label(crate::file_browser::SHOW_LABEL)
                     .icon(Icon::Folder)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Err(error) = std::process::Command::new("open")
-                            .arg("-R")
-                            .arg(&path)
-                            .spawn()
-                        {
-                            this.download_notice = Some(format!("Could not open Finder: {error}"));
+                        if let Err(error) = crate::file_browser::open(&path, true) {
+                            this.download_notice = Some(format!(
+                                "Could not open {}: {error}",
+                                crate::file_browser::NAME
+                            ));
                             cx.notify();
                         }
                     }))

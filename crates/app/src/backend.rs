@@ -123,7 +123,8 @@ fn session() -> &'static Arc<SessionStore> {
             keychain: audible::credentials::KeychainStore::new(),
         });
         #[cfg(not(target_os = "macos"))]
-        let inner: Arc<dyn CredentialStore> = Arc::new(Unsupported);
+        let inner: Arc<dyn CredentialStore> =
+            Arc::new(audible::credentials::FileStore::new(credentials_directory()));
         Arc::new(SessionStore::new(inner))
     })
 }
@@ -131,10 +132,10 @@ fn session() -> &'static Arc<SessionStore> {
 /// Where the sign-in is kept: private files, not the Keychain. The app is
 /// signed with a self-signed identity, which macOS does not trust, so the
 /// Keychain asked for access again after every rebuild and update.
-#[cfg(target_os = "macos")]
 fn credentials_directory() -> std::path::PathBuf {
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    std::path::PathBuf::from(home).join("Library/Application Support/Better Audible/Credentials")
+    crate::paths::support()
+        .expect("Application data directory not found")
+        .join("Credentials")
 }
 
 /// The file store, which moves a sign-in saved by older versions out of the
@@ -174,27 +175,7 @@ impl CredentialStore for MovedFromKeychain {
 }
 
 fn store() -> anyhow::Result<Arc<dyn CredentialStore>> {
-    anyhow::ensure!(
-        cfg!(target_os = "macos"),
-        "Account storage is currently supported on macOS only"
-    );
     Ok(session().clone())
-}
-
-#[cfg(not(target_os = "macos"))]
-struct Unsupported;
-
-#[cfg(not(target_os = "macos"))]
-impl CredentialStore for Unsupported {
-    fn load(&self, _: &str) -> audible::Result<Option<audible::credentials::Credentials>> {
-        Ok(None)
-    }
-    fn save(&self, _: &str, _: &audible::credentials::Credentials) -> audible::Result<()> {
-        Ok(())
-    }
-    fn delete(&self, _: &str) -> audible::Result<()> {
-        Ok(())
-    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -211,11 +192,7 @@ fn account_directory(key: &str) -> anyhow::Result<std::path::PathBuf> {
         key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()),
         "Invalid account identifier"
     );
-    let home =
-        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
-    Ok(std::path::PathBuf::from(home)
-        .join("Library/Application Support/Better Audible/Accounts")
-        .join(key))
+    Ok(crate::paths::support()?.join("Accounts").join(key))
 }
 
 fn write_json(path: &std::path::Path, value: &impl serde::Serialize) -> anyhow::Result<()> {
@@ -344,6 +321,10 @@ pub fn books_directory(key: &str) -> Option<std::path::PathBuf> {
 
 pub fn downloaded_path(key: &str, asin: &audible::Asin) -> Option<std::path::PathBuf> {
     let directory = books_directory(key)?;
+    playable_path(&directory, asin)
+}
+
+fn playable_path(directory: &std::path::Path, asin: &audible::Asin) -> Option<std::path::PathBuf> {
     ["m4b", "m4a"]
         .iter()
         .map(|extension| directory.join(format!("{asin}.{extension}")))
@@ -553,9 +534,7 @@ pub fn save_position(
 /// Fetch a cover to the disposable caches directory. Covers are public images;
 /// credentials are never sent with this request.
 pub fn cover(asin: &audible::Asin, url: &str) -> anyhow::Result<std::path::PathBuf> {
-    let home =
-        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
-    let directory = std::path::PathBuf::from(home).join("Library/Caches/Better Audible/Covers");
+    let directory = crate::paths::cache()?.join("Covers");
     let path = directory.join(format!("{asin}.image"));
     if path.is_file() {
         return Ok(path);
@@ -604,6 +583,29 @@ pub fn search_catalog(query: String) -> anyhow::Result<Vec<audible::models::Prod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playable_path_excludes_encrypted_and_partial_downloads() {
+        let directory = std::env::temp_dir().join(format!(
+            "better-audible-playable-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let asin = audible::Asin::new("B002V5D7RU").unwrap();
+        assert!(playable_path(&directory, &asin).is_none());
+        for extension in ["aax", "aaxc", "aaxc.part", "partial.m4b"] {
+            std::fs::write(directory.join(format!("{asin}.{extension}")), []).unwrap();
+        }
+        assert!(playable_path(&directory, &asin).is_none());
+        let audio = directory.join(format!("{asin}.m4b"));
+        std::fs::write(&audio, []).unwrap();
+        assert_eq!(playable_path(&directory, &asin), Some(audio.clone()));
+        std::fs::remove_file(audio).unwrap();
+        let audio = directory.join(format!("{asin}.m4a"));
+        std::fs::write(&audio, []).unwrap();
+        assert_eq!(playable_path(&directory, &asin), Some(audio));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn session_store_reuses_reads_and_tracks_writes_and_deletes() {
@@ -909,10 +911,7 @@ impl AppearanceRecord {
 }
 
 fn appearance_path() -> anyhow::Result<std::path::PathBuf> {
-    let home =
-        std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
-    Ok(std::path::PathBuf::from(home)
-        .join("Library/Application Support/Better Audible/appearance.json"))
+    Ok(crate::paths::support()?.join("appearance.json"))
 }
 
 /// Speed, volume and download quality, carried over between launches.
@@ -922,6 +921,9 @@ pub struct PlaybackPrefs {
     pub volume: Option<f32>,
     #[serde(default)]
     pub download_quality: DownloadQuality,
+    /// Which speech model read along downloads where it uses Whisper.
+    #[serde(default)]
+    pub speech_model: crate::whisper::Model,
 }
 
 /// How good, and how big, new downloads are.

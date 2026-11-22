@@ -125,6 +125,10 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
     .detach();
 }
 
+#[cfg(not(target_os = "macos"))]
+fn ghost(_: &Window) {}
+
+#[cfg(target_os = "macos")]
 fn ghost(window: &Window) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     unsafe extern "C" {

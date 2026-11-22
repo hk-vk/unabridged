@@ -1,9 +1,14 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! Better Audible's native application shell.
 mod backend;
 mod books;
 mod browser_tab;
+#[cfg(target_os = "windows")]
+mod chrome;
+mod file_browser;
 mod library;
 mod malayalam;
+mod paths;
 mod playback;
 mod player;
 mod region;
@@ -13,6 +18,7 @@ mod streaming;
 mod tour;
 mod transcript;
 mod views;
+mod whisper;
 mod windows;
 
 use books::*;
@@ -62,12 +68,26 @@ enum Page {
     Settings,
 }
 
+const LOCAL_BOOKS_LABEL: &str = if cfg!(target_os = "macos") {
+    "On this Mac"
+} else {
+    "On this PC"
+};
+
+fn device_copy(text: &str) -> String {
+    if cfg!(target_os = "macos") {
+        text.to_owned()
+    } else {
+        text.replace("Mac", "PC")
+    }
+}
+
 /// The name a back link shows for `page`.
 fn page_name(page: Page) -> &'static str {
     match page {
         Page::Progress => "In progress",
         Page::Explore | Page::Search => "Explore",
-        Page::OnThisMac => "On this Mac",
+        Page::OnThisMac => LOCAL_BOOKS_LABEL,
         Page::Bookmarks => "Bookmarks",
         Page::Finished => "Finished",
         Page::Authors | Page::AuthorBooks => "Authors",
@@ -269,6 +289,7 @@ struct Shell {
     /// Speed and volume, saved between launches.
     prefs: backend::PlaybackPrefs,
     read_along: Option<ReadAlong>,
+    speech_model_busy: bool,
     /// The transcript on Now Playing.
     read_along_follow: Follow,
     /// The transcript in the expanded mini player.
@@ -354,7 +375,7 @@ fn open_main_window(cx: &mut gpui_kit::App) {
             show: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
             focus: std::env::var_os("BETTER_AUDIBLE_SMOKE_AUDIO").is_none(),
             titlebar: Some(TitlebarOptions {
-                appears_transparent: cfg!(target_os = "macos"),
+                appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
                 ..Default::default()
             }),
             ..Default::default()
@@ -441,16 +462,26 @@ pub(crate) fn sync_app_icon(system: gpui_kit::WindowAppearance, cx: &gpui_kit::A
     let _ = light;
 }
 
+macro_rules! shortcut {
+    ($key:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $key)
+        } else {
+            concat!("ctrl-", $key)
+        }
+    };
+}
+
 fn main() {
     let app = gpui_kit::application().with_assets(ui::Assets);
     app.on_reopen(reopen);
     app.run(|cx| {
         gpui_kit::init(cx);
         cx.bind_keys([
-            gpui_kit::KeyBinding::new("cmd-f", FocusSearch, None),
-            gpui_kit::KeyBinding::new("cmd-=", ReadAlongLarger, None),
-            gpui_kit::KeyBinding::new("cmd-+", ReadAlongLarger, None),
-            gpui_kit::KeyBinding::new("cmd--", ReadAlongSmaller, None),
+            gpui_kit::KeyBinding::new(shortcut!("f"), FocusSearch, None),
+            gpui_kit::KeyBinding::new(shortcut!("="), ReadAlongLarger, None),
+            gpui_kit::KeyBinding::new(shortcut!("+"), ReadAlongLarger, None),
+            gpui_kit::KeyBinding::new(shortcut!("-"), ReadAlongSmaller, None),
         ]);
         if let Err(error) = ui::init(backend::load_appearance(), cx) {
             eprintln!("Could not initialize the interface: {error:#}");
@@ -458,6 +489,8 @@ fn main() {
             return;
         }
         sync_app_icon(cx.window_appearance(), cx);
+        cx.on_app_quit(|_| async { whisper::shutdown() }).detach();
+        whisper::select(backend::load_playback().speech_model);
         start_updater();
         open_main_window(cx);
     });
@@ -467,6 +500,25 @@ fn main() {
 mod download_tests {
     use super::*;
     use audible::{DownloadEvent, download::Progress};
+
+    #[test]
+    fn platform_copy_and_shortcuts_preserve_macos_wording() {
+        assert_eq!(device_copy(""), "");
+        assert_eq!(device_copy("Downloads"), "Downloads");
+        if cfg!(target_os = "macos") {
+            assert_eq!(device_copy("Saved on this Mac"), "Saved on this Mac");
+            assert_eq!(shortcut!("f"), "cmd-f");
+            assert_eq!(shortcut!("="), "cmd-=");
+            assert_eq!(shortcut!("+"), "cmd-+");
+            assert_eq!(shortcut!("-"), "cmd--");
+        } else {
+            assert_eq!(device_copy("Saved on this Mac"), "Saved on this PC");
+            assert_eq!(shortcut!("f"), "ctrl-f");
+            assert_eq!(shortcut!("="), "ctrl-=");
+            assert_eq!(shortcut!("+"), "ctrl-+");
+            assert_eq!(shortcut!("-"), "ctrl--");
+        }
+    }
 
     #[test]
     fn sleep_timer_only_stops_at_its_deadline_or_matching_chapter_end() {

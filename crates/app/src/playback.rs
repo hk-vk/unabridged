@@ -778,6 +778,19 @@ impl Shell {
     }
 
     /// Downloads the speech model, then transcribes the chapter.
+    /// Downloads `model` for read along where it uses Whisper, remembering
+    /// the choice (and deleting any other model) first.
+    pub(crate) fn download_whisper_model(
+        &mut self,
+        model: crate::whisper::Model,
+        cx: &mut Context<Self>,
+    ) {
+        self.prefs.speech_model = model;
+        self.save_prefs(cx);
+        crate::whisper::select(model);
+        self.download_speech_model(cx);
+    }
+
     pub(crate) fn download_speech_model(&mut self, cx: &mut Context<Self>) {
         if let Some(read) = &mut self.read_along {
             transcript::install_model(read.locale, read.job.clone());

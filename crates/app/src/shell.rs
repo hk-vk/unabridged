@@ -139,6 +139,7 @@ impl Shell {
             sleep_choice: "Off",
             prefs: backend::load_playback(),
             read_along: None,
+            speech_model_busy: false,
             read_along_follow: Default::default(),
             mini_follow: Default::default(),
             mini_lyrics: false,

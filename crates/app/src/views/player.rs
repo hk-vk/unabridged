@@ -129,6 +129,11 @@ impl Shell {
                     .items_center()
                     .pl(px(84.))
                     .pr(px(20.))
+                    .when(cfg!(target_os = "windows"), |header| {
+                        header
+                            .pr(px(158.))
+                            .window_control_area(gpui_kit::WindowControlArea::Drag)
+                    })
                     .gap(px(10.))
                     .children(timeline.chapter.as_ref().map(|(index, name)| {
                         let total = active.chapters.len();
@@ -177,6 +182,7 @@ impl Shell {
                             .child(
                                 div()
                                     .max_w(px(if compact { 300. } else { 460. }))
+                                    .when(cfg!(target_os = "windows"), |picker| picker.occlude())
                                     .flex()
                                     .items_center()
                                     .gap(px(6.))
@@ -216,18 +222,28 @@ impl Shell {
                             )
                     }))
                     .child(
-                        BackLink::new("player-back", self.back_label())
-                            .color(palette.on_field_muted)
-                            .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                        div()
+                            .when(cfg!(target_os = "windows"), |back| back.occlude())
+                            .child(
+                                BackLink::new("player-back", self.back_label())
+                                    .color(palette.on_field_muted)
+                                    .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
+                            ),
                     )
                     .child(div().flex_1().min_w_0())
                     .child(
-                        IconButton::new("open-mini", Icon::Pip, 17.)
-                            .hit_area(28.)
-                            .color(palette.on_field_muted)
-                            .hover_fill(palette.on_field_track)
-                            .tooltip("Open mini player")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_mini_player(cx))),
+                        div()
+                            .when(cfg!(target_os = "windows"), |mini| mini.occlude())
+                            .child(
+                                IconButton::new("open-mini", Icon::Pip, 17.)
+                                    .hit_area(28.)
+                                    .color(palette.on_field_muted)
+                                    .hover_fill(palette.on_field_track)
+                                    .tooltip("Open mini player")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.open_mini_player(cx)),
+                                    ),
+                            ),
                     ),
             )
             .children(self.download_notice.as_ref().map(|message| {
@@ -913,7 +929,7 @@ pub(crate) fn read_along_list(
         div()
             .type_style(ui::text::BODY)
             .text_color(palette.on_field_muted)
-            .child(text.to_string())
+            .child(device_copy(text))
             .into_any_element()
     };
     let Some(active) = &shell.player else {
@@ -981,8 +997,48 @@ pub(crate) fn read_along_list(
             return transcript_placeholder("Getting ready", palette, mini, reduce_motion);
         }
         transcript::Phase::NeedsModel => {
-            let entity = entity.clone();
             let language = transcript::speech_name(read.locale);
+            let whisper = transcript::engine(read.locale) == transcript::Engine::Whisper;
+            let chip = |id: &'static str, label: String| {
+                Chip::new(id)
+                    .label(label)
+                    .icon(Icon::Download, palette.on_field)
+                    .height(ui::metrics::size::POPUP)
+                    .style(ChipStyle::Outline {
+                        outline: palette.on_field_track,
+                        content: palette.on_field,
+                    })
+            };
+            // Where read along uses Whisper, the listener picks the model as
+            // they download it: the accurate one, or the smaller one.
+            let actions = if whisper {
+                crate::whisper::Model::ALL
+                    .into_iter()
+                    .map(|model| {
+                        let entity = entity.clone();
+                        chip(
+                            match model {
+                                crate::whisper::Model::Turbo => "download-whisper-turbo",
+                                crate::whisper::Model::Small => "download-whisper-small",
+                            },
+                            format!("{} ({} MB)", model.label(), model.megabytes()),
+                        )
+                        .on_click(move |_, _, cx| {
+                            let _ = entity
+                                .update(cx, |this, cx| this.download_whisper_model(model, cx));
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                let entity = entity.clone();
+                vec![
+                    chip("download-speech-model", format!("Add {language} speech")).on_click(
+                        move |_, _, cx| {
+                            let _ = entity.update(cx, |this, cx| this.download_speech_model(cx));
+                        },
+                    ),
+                ]
+            };
             return div()
                 .flex()
                 .flex_col()
@@ -991,25 +1047,15 @@ pub(crate) fn read_along_list(
                     div()
                         .type_style(ui::text::BODY)
                         .text_color(palette.on_field_muted)
-                        .child(format!(
-                            "Read along uses your Mac’s built-in speech recognition. macOS needs to add {language} speech first. It’s a one-time download that macOS keeps. Nothing leaves your Mac."
-                        )),
+                        .child(if whisper {
+                            "Read along transcribes on this computer with an open speech model, a one-time download. The most accurate one is best with accents and names; the smaller one is faster on older computers. Nothing leaves your computer.".to_string()
+                        } else {
+                            format!(
+                                "Read along uses your Mac’s built-in speech recognition. macOS needs to add {language} speech first. It’s a one-time download that macOS keeps. Nothing leaves your Mac."
+                            )
+                        }),
                 )
-                .child(
-                    div().flex().child(
-                        Chip::new("download-speech-model")
-                            .label(format!("Add {language} speech"))
-                            .icon(Icon::Download, palette.on_field)
-                            .height(ui::metrics::size::POPUP)
-                            .style(ChipStyle::Outline {
-                                outline: palette.on_field_track,
-                                content: palette.on_field,
-                            })
-                            .on_click(move |_, _, cx| {
-                                let _ = entity.update(cx, |this, cx| this.download_speech_model(cx));
-                            }),
-                    ),
-                )
+                .child(div().flex().flex_wrap().gap(px(8.)).children(actions))
                 .into_any_element();
         }
         transcript::Phase::Downloading(progress) => {
@@ -1022,11 +1068,17 @@ pub(crate) fn read_along_list(
                     div()
                         .type_style(ui::text::CAPTION.tabular())
                         .text_color(palette.on_field_muted)
-                        .child(format!(
-                            "Adding {} speech… {:.0}%",
-                            transcript::speech_name(read.locale),
-                            progress * 100.
-                        )),
+                        .child(
+                            if transcript::engine(read.locale) == transcript::Engine::Whisper {
+                                format!("Downloading speech model… {:.0}%", progress * 100.)
+                            } else {
+                                format!(
+                                    "Adding {} speech… {:.0}%",
+                                    transcript::speech_name(read.locale),
+                                    progress * 100.
+                                )
+                            },
+                        ),
                 )
                 .child(
                     SegmentedProgress::new(0., *progress, 0.)

@@ -52,6 +52,18 @@ fn from_locale(locale: &str) -> Option<Marketplace> {
 }
 
 pub fn suggested_marketplace() -> Option<Marketplace> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut locale = [0u16; 85];
+        let length =
+            unsafe { windows::Win32::Globalization::GetUserDefaultLocaleName(&mut locale) };
+        if length > 1
+            && let Some(marketplace) =
+                from_locale(&String::from_utf16_lossy(&locale[..length as usize - 1]))
+        {
+            return Some(marketplace);
+        }
+    }
     #[cfg(target_os = "macos")]
     if let Ok(output) = std::process::Command::new("/usr/bin/defaults")
         .args(["read", "-g", "AppleLocale"])
