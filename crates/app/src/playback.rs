@@ -707,6 +707,9 @@ impl Shell {
         });
         self.read_along_follow.reset();
         self.mini_follow.reset();
+        self.transcript_match_cursor = None;
+        self.transcript_search_scroll
+            .set_offset(point(px(0.), px(0.)));
     }
 
     /// Downloads the speech model, then transcribes the chapter.
@@ -718,8 +721,49 @@ impl Shell {
         cx.notify();
     }
 
+    /// Jumps playback to the next (or previous) transcript match for the
+    /// active chapter search query.
+    pub(crate) fn jump_transcript_match(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let query = self.transcript_search.read(cx).value().trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        let Some(duration) = self.player.as_ref().map(|a| a.player.duration().max(1.)) else {
+            return;
+        };
+        let Some(read) = &self.read_along else {
+            return;
+        };
+        let target = {
+            let Ok(job) = read.job.lock() else {
+                return;
+            };
+            let matches = views::player::transcript_matches(&job.lines, &query);
+            let count = matches.len();
+            if count == 0 {
+                return;
+            }
+            let next = match (self.transcript_match_cursor, forward) {
+                (None, true) => 0,
+                (None, false) => count - 1,
+                (Some(current), true) => (current + 1) % count,
+                (Some(current), false) => (current + count - 1) % count,
+            };
+            self.transcript_match_cursor = Some(next);
+            self.transcript_search_scroll
+                .scroll_to_top_of_item(next.saturating_sub(1));
+            let line = &job.lines[matches[next]];
+            (line.start / duration).clamp(0., 1.) as f32
+        };
+        self.seek_fraction(target, cx);
+        self.read_along_follow.followed = None;
+        self.mini_follow.followed = None;
+    }
+
     /// Scrolls the transcript so the spoken line sits in the upper third.
-    pub(crate) fn follow_read_along(&mut self, reduce_motion: bool) {
+    pub(crate) fn follow_read_along(&mut self, cx: &Context<Self>) {
+        let reduce_motion = cx.reduce_motion();
+        let searching = !self.transcript_search.read(cx).value().trim().is_empty();
         let Some(active) = &self.player else {
             return;
         };
@@ -735,7 +779,7 @@ impl Shell {
         else {
             return;
         };
-        if self.read_along_open && self.page == Page::NowPlaying {
+        if self.read_along_open && self.page == Page::NowPlaying && !searching {
             self.read_along_follow.follow(current, reduce_motion);
         }
         if self.mini_lyrics && self.mini_window.is_some() {

@@ -97,13 +97,24 @@ impl Shell {
         let stage = div()
             .size_full()
             // Now Playing renders outside the window frame, so it handles
-            // the text size shortcuts itself.
+            // the text size and search shortcuts itself.
             .on_action(
                 cx.listener(|this, _: &ReadAlongLarger, _, cx| this.step_read_along_size(1, cx)),
             )
             .on_action(
                 cx.listener(|this, _: &ReadAlongSmaller, _, cx| this.step_read_along_size(-1, cx)),
             )
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                if !this.read_along_open {
+                    this.read_along_open = true;
+                    this.ensure_read_along(cx);
+                }
+                window.focus(
+                    &gpui_kit::Focusable::focus_handle(&this.transcript_search, cx),
+                    cx,
+                );
+                cx.notify();
+            }))
             .flex()
             .flex_col()
             .font_family(ui::typography::family::UI)
@@ -292,20 +303,44 @@ impl Shell {
                                         .mt(px(6.))
                                     })),
                             )
-                            .child(
-                                // The hover fill hangs 8pt outside the text, so
-                                // the text lines up with the column edge.
-                                div().flex_1().min_w_0().min_h_0().ml(px(-8.)).child(
-                                    read_along_list(
-                                        self,
-                                        ReadAlongPlace::NowPlaying,
-                                        &palette,
-                                        cx.entity().downgrade(),
-                                        window,
-                                        cx,
-                                    ),
-                                ),
-                            )
+                            .child({
+                                let query =
+                                    self.transcript_search.read(cx).value().trim().to_string();
+                                let search_summary = self.read_along.as_ref().and_then(|read| {
+                                    let job = read.job.lock().ok()?;
+                                    (!job.lines.is_empty()).then(|| {
+                                        if query.is_empty() {
+                                            None
+                                        } else {
+                                            Some(transcript_matches(&job.lines, &query).len())
+                                        }
+                                    })
+                                });
+                                let search_bar = search_summary.map(|match_count| {
+                                    self.transcript_search_bar(&palette, match_count, window, cx)
+                                });
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .flex()
+                                    .flex_col()
+                                    .children(search_bar)
+                                    .child(
+                                        // The hover fill hangs 8pt outside the text, so
+                                        // the text lines up with the column edge.
+                                        div().flex_1().min_w_0().min_h_0().ml(px(-8.)).child(
+                                            read_along_list(
+                                                self,
+                                                ReadAlongPlace::NowPlaying,
+                                                &palette,
+                                                cx.entity().downgrade(),
+                                                window,
+                                                cx,
+                                            ),
+                                        ),
+                                    )
+                            })
                     } else {
                         // Cover and the book's name side by side, centred.
                         div()
@@ -597,6 +632,112 @@ impl Shell {
 }
 
 impl Shell {
+    /// Search bar above the Now Playing transcript for jumping to matching lines.
+    fn transcript_search_bar(
+        &self,
+        palette: &ui::theme::BookPalette,
+        match_count: Option<usize>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let palette = *palette;
+        self.transcript_search.update(cx, |state, _| {
+            state.set_editor_style(gpui_kit::base::input::InputEditorStyle {
+                foreground: palette.on_field,
+                muted_foreground: palette.on_field_muted,
+                selection: palette.on_field.opacity(0.28),
+                caret: palette.on_field,
+                ..Default::default()
+            });
+        });
+        let focused =
+            gpui_kit::Focusable::focus_handle(&self.transcript_search, cx).is_focused(window);
+        let searching = match_count.is_some();
+        let count_label = match_count.map(|count| match count {
+            0 => "No matches".to_string(),
+            1 => "1 match".to_string(),
+            n => format!("{n} matches"),
+        });
+        div()
+            .id("transcript-search-bar")
+            .flex_none()
+            .mb(px(14.))
+            .h(px(36.))
+            .px(px(12.))
+            .rounded(px(10.))
+            .bg(palette.on_field_track)
+            .border_1()
+            .border_color(if focused {
+                palette.on_field_muted.opacity(0.6)
+            } else {
+                palette.on_field_track
+            })
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .cursor_text()
+            .on_click(cx.listener(|this, _, window, cx| {
+                window.focus(
+                    &gpui_kit::Focusable::focus_handle(&this.transcript_search, cx),
+                    cx,
+                );
+            }))
+            .child(
+                ui::icon(Icon::Search)
+                    .flex_none()
+                    .size(px(14.))
+                    .text_color(if focused {
+                        palette.on_field
+                    } else {
+                        palette.on_field_muted
+                    }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .type_style(ui::text::BODY)
+                    .text_color(palette.on_field)
+                    .child(self.transcript_search.clone()),
+            )
+            .children(count_label.map(|label| {
+                div()
+                    .flex_none()
+                    .type_style(ui::text::CAPTION.tabular())
+                    .text_color(palette.on_field_muted)
+                    .child(label)
+            }))
+            .when(searching, |bar| {
+                bar.child(
+                    IconButton::new("clear-transcript-search", Icon::Cancel, 13.)
+                        .hit_area(24.)
+                        .color(palette.on_field_muted)
+                        .hover_fill(palette.on_field_track)
+                        .tooltip("Clear search (Esc)")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.transcript_search
+                                .update(cx, |state, cx| state.clean(window, cx));
+                            this.transcript_match_cursor = None;
+                            this.read_along_follow.followed = None;
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(!searching, |bar| {
+                bar.child(
+                    div()
+                        .flex_none()
+                        .px(px(6.))
+                        .py(px(2.))
+                        .rounded(px(5.))
+                        .bg(palette.on_field_track)
+                        .type_style(ui::text::FOOTNOTE)
+                        .text_color(palette.on_field_muted)
+                        .child("⌘F"),
+                )
+            })
+    }
+
     /// Makes the read along text `delta` steps larger and saves it.
     pub(crate) fn step_read_along_size(&mut self, delta: i8, cx: &mut Context<Self>) {
         let current = cx.theme().settings;
@@ -899,6 +1040,106 @@ pub(crate) fn read_along_list(
     let duration = active.player.duration().max(1.);
     let current = transcript::current_line(&job.lines, position);
     let still_working = job.phase == transcript::Phase::Transcribing;
+    let query = if mini {
+        String::new()
+    } else {
+        shell.transcript_search.read(cx).value().trim().to_string()
+    };
+    if !query.is_empty() {
+        let chapter_start = active.timeline().start;
+        let matches = transcript_matches(&job.lines, &query);
+        if matches.is_empty() {
+            return div()
+                .px(px(8.))
+                .pt(px(8.))
+                .type_style(ui::text::BODY)
+                .text_color(palette.on_field_muted)
+                .child(if still_working {
+                    ShimmerText::new("No matches yet — still transcribing…").into_any_element()
+                } else {
+                    "No matches in this chapter.".into_any_element()
+                })
+                .into_any_element();
+        }
+        let mut results = div()
+            .id("read-along-search")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&shell.transcript_search_scroll)
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .pb(px(120.));
+        for (match_pos, line_index) in matches.into_iter().enumerate() {
+            let line = &job.lines[line_index];
+            let target = (line.start / duration).clamp(0., 1.) as f32;
+            let timestamp = model::format::clock(std::time::Duration::from_secs_f64(
+                (line.start - chapter_start).max(0.),
+            ));
+            let is_current =
+                current == Some(line_index) || shell.transcript_match_cursor == Some(match_pos);
+            let base_color = if is_current {
+                palette.on_field
+            } else {
+                palette.on_field_muted
+            };
+            results = results.child(
+                div()
+                    .id(("read-along-match", line_index))
+                    .cursor_pointer()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(8.))
+                    .when(is_current, |row| row.bg(palette.on_field_track))
+                    .hover(|style| style.bg(palette.on_field_track))
+                    .flex()
+                    .items_baseline()
+                    .gap(px(12.))
+                    .on_click({
+                        let entity = entity.clone();
+                        move |_, _, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.transcript_match_cursor = Some(match_pos);
+                                this.seek_fraction(target, cx);
+                                this.read_along_follow.followed = None;
+                                this.mini_follow.followed = None;
+                            });
+                        }
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(48.))
+                            .type_style(ui::text::CAPTION.tabular())
+                            .text_color(palette.on_field_muted)
+                            .child(timestamp),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .type_style(ui::text::BOOK_CAPTION.scaled(text_scale))
+                            .text_color(base_color)
+                            .child(highlight_matches(
+                                &line.text,
+                                &query,
+                                base_color,
+                                palette.on_field,
+                            )),
+                    ),
+            );
+        }
+        if still_working {
+            results = results.child(
+                div()
+                    .px(px(8.))
+                    .type_style(ui::text::CAPTION)
+                    .text_color(palette.on_field_muted)
+                    .child(ShimmerText::new("Still transcribing this chapter…")),
+            );
+        }
+        return results.into_any_element();
+    }
     // Glide the list and crossfade the highlight between lines.
     let gliding = follow.step_glide();
     let fade = follow.changed_at.elapsed().as_secs_f32() / playback::HIGHLIGHT_FADE.as_secs_f32();
@@ -1096,9 +1337,101 @@ fn transcript_placeholder(
     column.into_any_element()
 }
 
+/// Indices of transcript lines matching `query` (case-insensitive).
+pub(crate) fn transcript_matches(lines: &[transcript::Line], query: &str) -> Vec<usize> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| (!match_ranges(&line.text, query).is_empty()).then_some(index))
+        .collect()
+}
+
+/// Non-overlapping byte ranges in `text` matching `query` case-insensitively,
+/// guaranteed to fall on UTF-8 char boundaries of `text`.
+fn match_ranges(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    let needle: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let haystack: Vec<(usize, usize, char)> = text
+        .char_indices()
+        .flat_map(|(start, ch)| {
+            let end = start + ch.len_utf8();
+            ch.to_lowercase().map(move |lower| (start, end, lower))
+        })
+        .collect();
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i + needle.len() <= haystack.len() {
+        if (0..needle.len()).all(|j| haystack[i + j].2 == needle[j]) {
+            let start = haystack[i].0;
+            let end = haystack[i + needle.len() - 1].1;
+            ranges.push(start..end);
+            i += needle.len();
+            while i < haystack.len() && haystack[i].0 < end {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    ranges
+}
+
+/// Draws `text` with `query` matches emphasized in `emphasis`.
+fn highlight_matches(
+    text: &str,
+    query: &str,
+    base: gpui_kit::Hsla,
+    emphasis: gpui_kit::Hsla,
+) -> gpui_kit::StyledText {
+    let ranges = match_ranges(text, query);
+    let mut highlights = Vec::new();
+    let mut cursor = 0;
+    for range in ranges {
+        if cursor < range.start {
+            highlights.push((
+                cursor..range.start,
+                gpui_kit::HighlightStyle {
+                    color: Some(base),
+                    ..Default::default()
+                },
+            ));
+        }
+        highlights.push((
+            range.clone(),
+            gpui_kit::HighlightStyle {
+                color: Some(emphasis),
+                font_weight: Some(gpui_kit::FontWeight::SEMIBOLD),
+                underline: Some(gpui_kit::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(emphasis.opacity(0.5)),
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+        ));
+        cursor = range.end;
+    }
+    if cursor < text.len() {
+        highlights.push((
+            cursor..text.len(),
+            gpui_kit::HighlightStyle {
+                color: Some(base),
+                ..Default::default()
+            },
+        ));
+    }
+    gpui_kit::StyledText::new(text.to_string()).with_highlights(highlights)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::chapter_name;
+    use super::{chapter_name, match_ranges, transcript_matches};
+    use crate::transcript::Line;
 
     #[test]
     fn chapter_names_drop_their_own_number() {
@@ -1110,5 +1443,44 @@ mod tests {
         assert_eq!(chapter_name("Chapter 3"), "Chapter 3");
         assert_eq!(chapter_name("1984"), "1984");
         assert_eq!(chapter_name("12 Rules"), "12 Rules");
+    }
+
+    #[test]
+    fn transcript_search_matches_case_insensitively_and_safely() {
+        let text = "Feel-Good Productivity makes productivity feel natural.";
+        let ranges = match_ranges(text, "productivity");
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(&text[ranges[0].clone()], "Productivity");
+        assert_eq!(&text[ranges[1].clone()], "productivity");
+
+        // Turkish dotted I expands in lowercase; slices must stay on char boundaries.
+        let unicode = "İstanbul and malayalam മലയാളം";
+        let i_ranges = match_ranges(unicode, "i");
+        assert_eq!(i_ranges.len(), 1);
+        assert_eq!(&unicode[i_ranges[0].clone()], "İ");
+        let ml_ranges = match_ranges(unicode, "മലയാളം");
+        assert_eq!(ml_ranges.len(), 1);
+        assert_eq!(&unicode[ml_ranges[0].clone()], "മലയാളം");
+
+        let lines = vec![
+            Line {
+                start: 0.,
+                end: 3.,
+                text: "First line about habits.".into(),
+            },
+            Line {
+                start: 3.,
+                end: 6.,
+                text: "Second line about focus.".into(),
+            },
+            Line {
+                start: 6.,
+                end: 9.,
+                text: "Building a better HABIT loop.".into(),
+            },
+        ];
+        assert_eq!(transcript_matches(&lines, "habit"), vec![0, 2]);
+        assert!(transcript_matches(&lines, "   ").is_empty());
+        assert!(transcript_matches(&lines, "nonexistent").is_empty());
     }
 }
