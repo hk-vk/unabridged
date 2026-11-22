@@ -2,6 +2,10 @@
 
 What changed in each release of Unabridged. The release workflow copies a version's section into its GitHub release notes, so add one before tagging.
 
+## 0.3.1
+
+- **Voices sound natural at faster speeds.** Above 1× narration could warble or stutter. It now stays clear at every speed, for streamed and downloaded books.
+
 ## 0.3.0
 
 - **Read along on macOS 14 and 15.** Macs without Apple's speech recognition (it needs macOS 26) now read along too, with an open Whisper model that runs on your Mac. The first time, choose **Most accurate** (575 MB) or **Smaller** (265 MB) and it downloads once.
