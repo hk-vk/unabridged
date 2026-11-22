@@ -10,6 +10,10 @@ What changed in each release of Unabridged. The release workflow copies a versio
 - **Search the transcript.** The search button next to the chapter name (or ⌘F) finds a word in the chapter, or a chapter by name; pick a match to jump there.
 - **Read along keeps up on slow connections.** Chapters are fetched in small pieces, several at once, and the next two chapters are made ready while you listen.
 - **Recovers from a dropped connection.** A stream that stalls reconnects by itself, and Play on a book that failed to load tries again from where it got to.
+- **Sign-in no longer gets stuck.** If the app doesn't move on after you sign in with Amazon, "Not continuing? Paste the address yourself" shows what Amazon's error page looks like and where to copy its address, with a box to paste it into.
+- **Progress shows where you are.** Percent and time left follow your place on this Mac, not Audible's last saved figure, which could lag far behind.
+- **Sign-in no longer gets stuck.** If the app doesn't move on after you sign in with Amazon, "Not continuing? Paste the address yourself" shows what Amazon's error page looks like and where to copy its address, with a box to paste it into.
+- **Progress shows where you are.** Percent and time left follow your place on this Mac, not Audible's last saved figure, which could lag far behind.
 
 ## 0.1.0
 
