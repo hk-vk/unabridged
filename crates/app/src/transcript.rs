@@ -42,6 +42,19 @@ pub struct Job {
 
 pub type SharedJob = Arc<Mutex<Job>>;
 
+/// Says when work for a job should stop: nobody shows it any more (the
+/// listener moved to another chapter or book, so read along dropped it).
+type Stop<'a> = &'a dyn Fn() -> bool;
+
+/// The error a stopped job's work returns; it's never shown.
+const STOPPED: &str = "Stopped";
+
+/// Whether the read along holding `job` has let go of it, leaving only the
+/// worker thread's reference.
+fn abandoned(job: &SharedJob) -> bool {
+    Arc::strong_count(job) <= 1
+}
+
 fn helper() -> Option<PathBuf> {
     let path = std::env::current_exe()
         .ok()?
@@ -54,7 +67,11 @@ const UNSUPPORTED: &str = "Read along needs macOS 26 or later.";
 
 /// Runs the helper and hands each JSON line to `on_line`. A `{"error": …}`
 /// line becomes the returned error.
-fn run(args: &[&str], mut on_line: impl FnMut(&serde_json::Value)) -> Result<(), String> {
+fn run(
+    args: &[&str],
+    stop: Stop,
+    mut on_line: impl FnMut(&serde_json::Value),
+) -> Result<(), String> {
     let helper = helper().ok_or_else(|| UNSUPPORTED.to_string())?;
     let mut child = Command::new(helper)
         .args(args)
@@ -65,6 +82,11 @@ fn run(args: &[&str], mut on_line: impl FnMut(&serde_json::Value)) -> Result<(),
     let mut error = None;
     if let Some(stdout) = child.stdout.take() {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if stop() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(STOPPED.into());
+            }
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
                 continue;
             };
@@ -293,20 +315,48 @@ impl Span {
 
 /// Makes sure a streamed span's audio for `from..to` is on this Mac,
 /// reporting progress into `job`. Nothing to do for a download.
-fn fetch(span: &Span, from: f64, to: f64, job: Option<&SharedJob>) -> Result<(), String> {
+/// A long stretch is fetched a few minutes at a time, checking `stop`
+/// between pieces.
+fn fetch(
+    span: &Span,
+    from: f64,
+    to: f64,
+    job: Option<&SharedJob>,
+    stop: Stop,
+) -> Result<(), String> {
     let Some(stream) = &span.stream else {
         return Ok(());
     };
-    let job = job.cloned();
-    let progress = move |fraction: f32| {
-        if let Some(job) = &job {
-            set_phase(job, Phase::Fetching(fraction));
+    let pieces = fetch_pieces(from, to);
+    let count = pieces.len().max(1) as f32;
+    for (index, (from, to)) in pieces.into_iter().enumerate() {
+        if stop() {
+            return Err(STOPPED.into());
         }
-    };
-    progress(0.);
-    stream
-        .prefetch(from, to, &progress)
-        .map_err(|error| format!("Couldn’t get this chapter from Audible: {error}"))
+        let job = job.cloned();
+        let progress = move |fraction: f32| {
+            if let Some(job) = &job {
+                set_phase(job, Phase::Fetching((index as f32 + fraction) / count));
+            }
+        };
+        progress(0.);
+        stream
+            .prefetch(from, to, &progress)
+            .map_err(|error| format!("Couldn’t get this chapter from Audible: {error}"))?;
+    }
+    Ok(())
+}
+
+/// `from..to` in stretches of at most [`STREAM_CHUNK`].
+fn fetch_pieces(from: f64, to: f64) -> Vec<(f64, f64)> {
+    let mut pieces = Vec::new();
+    let mut cursor = from;
+    while cursor < to {
+        let end = (cursor + STREAM_CHUNK).min(to);
+        pieces.push((cursor, end));
+        cursor = end;
+    }
+    pieces
 }
 
 /// Transcribes `from..to` of the span's audio, handing each finished line
@@ -316,6 +366,7 @@ fn transcribe(
     span: &Span,
     from: f64,
     to: f64,
+    stop: Stop,
     mut on_line: impl FnMut(Line),
 ) -> Result<Vec<Line>, String> {
     let mut lines = Vec::new();
@@ -323,6 +374,7 @@ fn transcribe(
     let (start, end) = (format!("{from:.3}"), format!("{to:.3}"));
     run(
         &["transcribe", &audio, &start, &end, span.locale],
+        stop,
         |value| {
             let line = Line {
                 start: value["start"].as_f64().unwrap_or(0.),
@@ -411,7 +463,8 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
                 .collect(),
         }));
         if let Some(next) = next {
-            std::thread::spawn(move || prefetch(next));
+            let watch = Arc::downgrade(&job);
+            std::thread::spawn(move || prefetch(next, &|| watch.strong_count() == 0));
         }
         return job;
     }
@@ -421,6 +474,7 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
     }));
     let worker = job.clone();
     std::thread::spawn(move || {
+        let stop = || abandoned(&worker);
         match model_status(span.locale) {
             Ok(true) => {}
             Ok(false) => return set_phase(&worker, Phase::NeedsModel),
@@ -441,12 +495,12 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
                 // are visible yet; later chunks fetch silently in the
                 // background while the user reads along.
                 let progress_job = (index == 0).then_some(&worker);
-                if let Err(message) = fetch(&span, from, to, progress_job) {
+                if let Err(message) = fetch(&span, from, to, progress_job, &stop) {
                     err = Some(message);
                     break;
                 }
                 set_phase(&worker, Phase::Transcribing);
-                match transcribe(&span, from, to, &mut push) {
+                match transcribe(&span, from, to, &stop, &mut push) {
                     Ok(lines) => ahead.extend(lines),
                     Err(message) => {
                         err = Some(message);
@@ -459,14 +513,14 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
                 None => Ok(ahead),
             }
         } else {
-            transcribe(&span, split, span.end, &mut push)
+            transcribe(&span, split, span.end, &stop, &mut push)
         };
         let result = ahead_result.and_then(|ahead| {
             if split <= span.start {
                 return Ok(ahead);
             }
-            fetch(&span, span.start, split, None)?;
-            let mut before = transcribe(&span, span.start, split, |_| {})?;
+            fetch(&span, span.start, split, None, &stop)?;
+            let mut before = transcribe(&span, span.start, split, &stop, |_| {})?;
             if let Ok(mut job) = worker.lock() {
                 let shown: Vec<Line> = before
                     .iter()
@@ -483,20 +537,22 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
                 store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
                 set_phase(&worker, Phase::Ready);
             }
+            // Nobody is watching a stopped job.
+            Err(message) if message == STOPPED => return,
             Err(message) => set_phase(&worker, Phase::Failed(message)),
         }
         if let Some(next) = next {
-            prefetch(next);
+            prefetch(next, &stop);
         }
     });
     job
 }
 
-fn prefetch(span: Span) {
+fn prefetch(span: Span, stop: Stop) {
     if cached(&span.key, &span.asin, span.locale, span.start_ms()).is_none()
         && model_status(span.locale) == Ok(true)
-        && fetch(&span, span.start, span.end, None).is_ok()
-        && let Ok(lines) = transcribe(&span, span.start, span.end, |_| {})
+        && fetch(&span, span.start, span.end, None, stop).is_ok()
+        && let Ok(lines) = transcribe(&span, span.start, span.end, stop, |_| {})
     {
         store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
     }
@@ -506,7 +562,7 @@ fn prefetch(span: Span) {
 /// cannot transcribe the language at all.
 fn model_status(locale: &str) -> Result<bool, String> {
     let mut status = None;
-    run(&["status", locale], |value| {
+    run(&["status", locale], &|| false, |value| {
         status = value["status"].as_str().map(str::to_string);
     })?;
     match status.as_deref() {
@@ -521,7 +577,7 @@ fn model_status(locale: &str) -> Result<bool, String> {
 pub fn install_model(locale: &'static str, job: SharedJob) {
     set_phase(&job, Phase::Downloading(0.));
     std::thread::spawn(move || {
-        let result = run(&["install", locale], |value| {
+        let result = run(&["install", locale], &|| false, |value| {
             if let Some(progress) = value["progress"].as_f64() {
                 set_phase(&job, Phase::Downloading(progress as f32));
             }
@@ -562,6 +618,27 @@ mod tests {
             stream_windows(285., 600.),
             vec![(285., 345.), (345., 525.), (525., 600.)]
         );
+    }
+
+    #[test]
+    fn long_fetches_go_in_pieces_so_they_can_stop() {
+        assert_eq!(
+            fetch_pieces(0., 400.),
+            vec![(0., 180.), (180., 360.), (360., 400.)]
+        );
+        assert!(fetch_pieces(5., 5.).is_empty());
+    }
+
+    #[test]
+    fn a_job_is_abandoned_once_read_along_lets_go() {
+        let job: SharedJob = Arc::new(Mutex::new(Job {
+            phase: Phase::Checking,
+            lines: Vec::new(),
+        }));
+        let worker = job.clone();
+        assert!(!abandoned(&worker));
+        drop(job);
+        assert!(abandoned(&worker));
     }
 
     #[test]

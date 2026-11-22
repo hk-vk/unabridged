@@ -428,6 +428,7 @@ mod tests {
             "file_plays_at_rate" => file_plays_at_rate,
             "stream_drops_mid_book" => stream_drops_mid_book,
             "real_stream_plays" => real_stream_plays,
+            "failed_open_keeps_its_place" => failed_open_keeps_its_place,
             _ => std::process::exit(2),
         };
         let ok = std::panic::catch_unwind(scenario).is_ok();
@@ -626,6 +627,29 @@ mod tests {
         assert!(!player.is_playing());
     }
 
+    /// A book opened at hour one whose stream fails before the seek lands
+    /// still reports hour one, so syncing never writes 0:00 to Audible.
+    fn failed_open_keeps_its_place() {
+        let memory = Arc::new(Memory {
+            failure: Some("network is down"),
+            ..Memory::new(vec![0; 64 * 1024])
+        });
+        let player =
+            Player::open_stream(memory.clone(), memory.bytes.len() as u64, M4A, None).unwrap();
+        player.seek(3600.);
+        let _ = player.play();
+        assert!(
+            wait_until(15., || player.play().is_err()),
+            "item never failed"
+        );
+        pump(0.5);
+        assert!(
+            (player.position() - 3600.).abs() < 0.01,
+            "place after failing: {}",
+            player.position()
+        );
+    }
+
     fn stream_drops_mid_book() {
         // About four minutes of audio; only the first ~40 s can be read.
         let memory = Arc::new(Memory {
@@ -716,6 +740,11 @@ mod tests {
     #[test]
     fn failing_stream_reports_its_error() {
         on_main_thread("failing_stream_reports_error");
+    }
+
+    #[test]
+    fn a_failed_open_keeps_its_place() {
+        on_main_thread("failed_open_keeps_its_place");
     }
 
     #[test]
