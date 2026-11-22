@@ -30,8 +30,12 @@ pub(crate) fn credits(
         model::book::join_names(&narrators)
     };
     let part = |caption: &'static str, who: String| {
+        // A long cast cuts off at the column's edge instead of running
+        // under whatever sits beside it.
         div()
             .flex()
+            .min_w_0()
+            .max_w_full()
             .gap(px(5.))
             .child(div().flex_none().text_color(label).child(caption))
             .child(div().min_w_0().truncate().text_color(names).child(who))

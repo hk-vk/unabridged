@@ -244,7 +244,7 @@ fn backoff(policy: &RetryPolicy, attempt: u32) -> Duration {
 
 /// Parse `Content-Range: bytes start-end/total` (or `bytes */total`) into
 /// `(start, total)`.
-fn parse_content_range(headers: &HeaderMap) -> Option<(u64, Option<u64>)> {
+pub(crate) fn parse_content_range(headers: &HeaderMap) -> Option<(u64, Option<u64>)> {
     let value = headers.get(CONTENT_RANGE)?.to_str().ok()?;
     let rest = value.trim().strip_prefix("bytes")?.trim();
     let (range, total) = rest.split_once('/')?;

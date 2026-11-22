@@ -35,7 +35,9 @@ impl Shell {
         let chapter_countdown = model::format::countdown(timeline.remaining());
         let ends = ends_at(timeline.remaining(), active.player.rate());
         let book_left = model::format::book_left_long(timeline.book_remaining());
-        let progress_note = if timeline.chapter.is_some() {
+        let progress_note = if active.player.is_buffering() {
+            "Loading…".to_string()
+        } else if timeline.chapter.is_some() {
             format!("Chapter ends at {ends} · {}", lowercase_first(&book_left))
         } else {
             format!("Ends at {ends}")
@@ -546,6 +548,25 @@ impl Shell {
                     .items_center()
                     .justify_end()
                     .gap(px(18.))
+                    .children(
+                        active
+                            .is_streaming()
+                            .then(|| {
+                                self.download_icon_in(
+                                    "full",
+                                    &active.account_key,
+                                    &active.asin,
+                                    &active.title,
+                                    (
+                                        palette.on_field_muted,
+                                        palette.on_field_muted,
+                                        palette.on_field_track,
+                                    ),
+                                    cx,
+                                )
+                            })
+                            .flatten(),
+                    )
                     .child(
                         IconButton::new("add-bookmark", Icon::BookmarkAdd, 18.)
                             .hit_area(28.)
@@ -728,7 +749,9 @@ pub(crate) fn read_along_list(
             .child(chip)
             .into_any_element()
     };
-    if backend::downloaded_path(&active.account_key, &active.asin).is_none() {
+    if !active.is_streaming()
+        && backend::downloaded_path(&active.account_key, &active.asin).is_none()
+    {
         // Read along needs the audio on this Mac; offer the download here
         // and start transcribing once it lands.
         return match &shell.download {
@@ -822,6 +845,27 @@ pub(crate) fn read_along_list(
                                 )
                             },
                         ),
+                )
+                .child(
+                    SegmentedProgress::new(0., *progress, 0.)
+                        .colors(palette.on_field, palette.on_field_track),
+                )
+                .into_any_element();
+        }
+        transcript::Phase::Fetching(progress) if job.lines.is_empty() => {
+            return div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .w(px(if mini { 240. } else { 280. }))
+                .child(
+                    div()
+                        .type_style(ui::text::CAPTION.tabular())
+                        .text_color(palette.on_field_muted)
+                        .child(format!(
+                            "Getting this chapter ready… {:.0}%",
+                            progress * 100.
+                        )),
                 )
                 .child(
                     SegmentedProgress::new(0., *progress, 0.)

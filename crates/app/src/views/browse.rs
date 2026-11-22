@@ -38,7 +38,6 @@ impl Shell {
                 let play_asin = asin.clone();
                 let remove_asin = asin.clone();
                 let bookmark_position = *position;
-                let downloaded = backend::downloaded_path(&key, asin).is_some();
                 let play_title = title.clone();
                 Some(
                     div()
@@ -62,7 +61,7 @@ impl Shell {
                                         .child(time),
                                 ),
                         )
-                        .child(if downloaded {
+                        .child(
                             IconButton::new(
                                 format!("bookmark-play-{asin}-{position}"),
                                 Icon::Play,
@@ -82,20 +81,8 @@ impl Shell {
                                         cx,
                                     )
                                 },
-                            ))
-                        } else {
-                            IconButton::new(
-                                format!("bookmark-book-{asin}-{position}"),
-                                Icon::ChevronRight,
-                                16.,
-                            )
-                            .hit_area(30.)
-                            .hover_fill(theme_fill)
-                            .tooltip("Open book")
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| this.open_book(play_asin.clone(), cx),
-                            ))
-                        })
+                            )),
+                        )
                         .child(
                             IconButton::new(
                                 format!("bookmark-remove-{asin}-{position}"),
@@ -316,18 +303,6 @@ impl Shell {
                 let button_id = format!("download-{}", asin);
                 let local_path = backend::downloaded_path(&key, &asin);
                 let downloaded = local_path.is_some();
-                let active = self
-                    .download
-                    .as_ref()
-                    .filter(|download| download.asin == asin);
-                let active_stage = active.map(|download| {
-                    download
-                        .event
-                        .lock()
-                        .map(|event| download_display(*event).0)
-                        .unwrap_or("Preparing download")
-                });
-                let other_download = self.download.is_some() && active.is_none();
                 let download_title = title.clone();
                 let open_asin = asin.clone();
                 let open_id = format!("book-{asin}");
@@ -388,37 +363,36 @@ impl Shell {
                             .text_color(color)
                             .child(progress),
                     )
-                    .child(if let Some(stage) = active_stage {
-                        div()
-                            .type_style(ui::text::BODY)
-                            .text_color(color)
-                            .child(format!("{stage}…"))
-                            .into_any_element()
-                    } else if downloaded {
+                    .child(
                         div()
                             .flex()
                             .items_center()
                             .gap(px(8.))
+                            .children(if downloaded {
+                                Some(
+                                    IconButton::new(format!("reveal-{asin}"), Icon::Folder, 16.)
+                                        .hit_area(30.)
+                                        .hover_fill(theme_fill)
+                                        .tooltip(crate::file_browser::SHOW_LABEL)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if let Some(path) = &local_path
+                                                && let Err(error) =
+                                                    crate::file_browser::open(path, true)
+                                            {
+                                                this.download_notice = Some(format!(
+                                                    "Could not open {}: {error}",
+                                                    crate::file_browser::NAME
+                                                ));
+                                                cx.notify();
+                                            }
+                                        }))
+                                        .into_any_element(),
+                                )
+                            } else {
+                                self.download_icon(&button_id, &key, &asin, &download_title, cx)
+                            })
                             .child(
-                                IconButton::new(format!("reveal-{asin}"), Icon::Folder, 16.)
-                                    .hit_area(30.)
-                                    .hover_fill(theme_fill)
-                                    .tooltip(crate::file_browser::SHOW_LABEL)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(path) = &local_path
-                                            && let Err(error) =
-                                                crate::file_browser::open(path, true)
-                                        {
-                                            this.download_notice = Some(format!(
-                                                "Could not open {}: {error}",
-                                                crate::file_browser::NAME
-                                            ));
-                                            cx.notify();
-                                        }
-                                    })),
-                            )
-                            .child(
-                                IconButton::new(button_id, Icon::Play, 16.)
+                                IconButton::new(format!("play-{asin}"), Icon::Play, 16.)
                                     .hit_area(30.)
                                     .color(theme_ink)
                                     .hover_fill(theme_fill)
@@ -431,25 +405,8 @@ impl Shell {
                                             cx,
                                         )
                                     })),
-                            )
-                            .into_any_element()
-                    } else if other_download {
-                        div()
-                            .type_style(ui::text::CAPTION)
-                            .text_color(color)
-                            .child("One download at a time")
-                            .into_any_element()
-                    } else {
-                        IconButton::new(button_id, Icon::Download, 16.)
-                            .hit_area(30.)
-                            .color(theme_ink)
-                            .hover_fill(theme_fill)
-                            .tooltip(device_copy("Download to this Mac"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.download(key.clone(), asin.clone(), download_title.clone(), cx)
-                            }))
-                            .into_any_element()
-                    })
+                            ),
+                    )
             }))
             .into_any_element()
     }

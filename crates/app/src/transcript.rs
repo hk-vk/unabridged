@@ -23,6 +23,8 @@ pub enum Phase {
     /// The selected engine needs a one-time model download.
     NeedsModel,
     Downloading(f32),
+    /// A streamed book: fetching this chapter's audio from Audible first.
+    Fetching(f32),
     Transcribing,
     Ready,
     Failed(String),
@@ -336,12 +338,33 @@ pub struct Span {
     pub start: f64,
     pub end: f64,
     pub locale: &'static str,
+    /// For a streamed book, where to fetch `audio` from: it's the stream
+    /// cache, which only holds what has been fetched.
+    pub stream: Option<Arc<crate::streaming::Stream>>,
 }
 
 impl Span {
     fn start_ms(&self) -> u64 {
         (self.start * 1000.) as u64
     }
+}
+
+/// Makes sure a streamed span's audio for `from..to` is on this Mac,
+/// reporting progress into `job`. Nothing to do for a download.
+fn fetch(span: &Span, from: f64, to: f64, job: Option<&SharedJob>) -> Result<(), String> {
+    let Some(stream) = &span.stream else {
+        return Ok(());
+    };
+    let job = job.cloned();
+    let progress = move |fraction: f32| {
+        if let Some(job) = &job {
+            set_phase(job, Phase::Fetching(fraction));
+        }
+    };
+    progress(0.);
+    stream
+        .prefetch(from, to, &progress)
+        .map_err(|error| format!("Couldn’t get this chapter from Audible: {error}"))
 }
 
 /// Transcribes `from..to` of the span's audio, handing each finished line
@@ -440,22 +463,28 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
                 job.lines.push(line);
             }
         };
-        let result = transcribe(&span, split, span.end, push).and_then(|ahead| {
-            if split <= span.start {
-                return Ok(ahead);
-            }
-            let mut before = transcribe(&span, span.start, split, |_| {})?;
-            if let Ok(mut job) = worker.lock() {
-                let shown: Vec<Line> = before
-                    .iter()
-                    .cloned()
-                    .map(|line| for_display(span.locale, line))
-                    .collect();
-                job.lines.splice(0..0, shown);
-            }
-            before.extend(ahead);
-            Ok(before)
-        });
+        let result = fetch(&span, split, span.end, Some(&worker))
+            .and_then(|()| {
+                set_phase(&worker, Phase::Transcribing);
+                transcribe(&span, split, span.end, push)
+            })
+            .and_then(|ahead| {
+                if split <= span.start {
+                    return Ok(ahead);
+                }
+                fetch(&span, span.start, split, None)?;
+                let mut before = transcribe(&span, span.start, split, |_| {})?;
+                if let Ok(mut job) = worker.lock() {
+                    let shown: Vec<Line> = before
+                        .iter()
+                        .cloned()
+                        .map(|line| for_display(span.locale, line))
+                        .collect();
+                    job.lines.splice(0..0, shown);
+                }
+                before.extend(ahead);
+                Ok(before)
+            });
         match result {
             Ok(lines) => {
                 store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
@@ -473,6 +502,7 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
 fn prefetch(span: Span) {
     if cached(&span.key, &span.asin, span.locale, span.start_ms()).is_none()
         && model_status(span.locale) == Ok(true)
+        && fetch(&span, span.start, span.end, None).is_ok()
         && let Ok(lines) = if engine(span.locale) == Engine::Whisper {
             crate::whisper::prefetch(&span.audio, span.start, span.end, span.locale)
                 .map_err(|error| error.to_string())

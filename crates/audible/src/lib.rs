@@ -11,6 +11,8 @@
 //! * [`download`]: resumable downloads with progress callbacks.
 //! * [`drm`]: AAX/AAXC decryption to a playable M4B, in pure Rust with an
 //!   optional ffmpeg fallback.
+//! * [`stream`]: play a book while it downloads: ranged CDN fetches,
+//!   decryption on the fly and a sparse on-disk cache.
 //! * [`client`]: the [`AudibleClient`] facade the UI talks to.
 //!
 //! See `README.md` for protocol notes and known uncertainties.
@@ -33,8 +35,10 @@ pub mod http;
 pub mod locale;
 pub mod models;
 pub mod signing;
+pub mod stream;
 
 pub use client::{Audible, AudibleClient, DownloadEvent, DownloadRequest, DownloadedBook};
 pub use error::{Error, Result};
 pub use locale::{Endpoints, Marketplace};
 pub use models::Asin;
+pub use stream::{StreamOptions, StreamSource};

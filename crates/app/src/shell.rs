@@ -92,7 +92,6 @@ impl Shell {
             download_notice: None,
             download: None,
             player: None,
-            loading_player: false,
             library_fetched: None,
             refreshing: false,
             pending_purchase: None,
@@ -117,6 +116,7 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let mut ticks = 0u32;
             let mut shown_second = None;
+            let mut shown_buffering = false;
             loop {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(200))
@@ -149,6 +149,14 @@ impl Shell {
                         if ended {
                             if let Some(player) = &mut this.player {
                                 player.was_playing = false;
+                                // A stream that lost its connection stops too.
+                                if let Some(error) = player.player.error() {
+                                    this.download_notice = Some(if player.is_streaming() {
+                                        format!("Playback stopped: {error}. Check your connection, or download the book to listen offline.")
+                                    } else {
+                                        format!("Playback stopped: {error}")
+                                    });
+                                }
                             }
                             this.sync_position(cx);
                             cx.notify();
@@ -158,6 +166,12 @@ impl Shell {
                         {
                             this.ensure_read_along(cx);
                             this.follow_read_along(cx.reduce_motion());
+                            cx.notify();
+                        }
+                        this.recover_stream(cx);
+                        let buffering = this.player.as_ref().is_some_and(|p| p.player.is_buffering());
+                        if buffering != shown_buffering {
+                            shown_buffering = buffering;
                             cx.notify();
                         }
                         if let Some(active) = this.player.as_ref().filter(|p| p.player.is_playing())

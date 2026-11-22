@@ -48,7 +48,7 @@ impl Shell {
         let paused = self
             .player
             .as_ref()
-            .filter(|active| !active.player.is_playing() && !self.loading_player)
+            .filter(|active| !active.player.is_playing() && active.player.is_ready())
             .map(|active| (active.account_key.clone(), active.asin.clone()));
         cx.spawn(async move |this, cx| {
             let library = cx.background_spawn(async { backend::refresh() }).await;

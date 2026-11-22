@@ -87,10 +87,13 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
                 asin,
                 account_key: "0".repeat(64),
                 title: "Test audio".into(),
-                player,
+                player: player.into(),
                 was_playing: true,
                 chapters: Vec::new(),
                 chapters_loading: false,
+                streaming: false,
+                stream: None,
+                stall: None,
             });
             shell.open_player(cx);
             Ok::<_, anyhow::Error>(())
