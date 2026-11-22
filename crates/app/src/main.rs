@@ -471,6 +471,7 @@ fn main() {
             return;
         }
         sync_app_icon(cx.window_appearance(), cx);
+        cx.on_app_quit(|_| async { whisper::shutdown() }).detach();
         start_updater();
         open_main_window(cx);
     });

@@ -175,6 +175,13 @@ pub fn remove() -> Result<()> {
 }
 
 /// Convert a BCP-47 locale to a language supported by Whisper.
+/// Languages the base model transcribes well enough to read along with.
+/// Others come out wrong, often in another script (Malayalam came out as
+/// Tamil and Urdu script), so read along says it isn't available instead.
+const SUPPORTED: &[&str] = &[
+    "en", "es", "fr", "de", "it", "pt", "nl", "ru", "pl", "uk", "ca", "sv", "ja", "zh", "ko", "tr",
+];
+
 pub fn language(locale: &str) -> Result<String> {
     let mut code = locale
         .split(['-', '_'])
@@ -185,8 +192,9 @@ pub fn language(locale: &str) -> Result<String> {
         code = "zh".into();
     }
     ensure!(
-        whisper_rs::get_lang_id(&code).is_some_and(|id| id < 99),
-        "Whisper does not support language {locale}"
+        SUPPORTED.contains(&code.as_str())
+            && whisper_rs::get_lang_id(&code).is_some_and(|id| id < 99),
+        "Read along isn’t available for this book’s language on this computer yet."
     );
     Ok(code)
 }
@@ -285,14 +293,19 @@ fn transcribe_with_request(
         .format;
     let track = audio_track(format.tracks())?;
     let track_id = track.id;
-    let rate = track
+    // HE-AAC files give the full (SBR) rate here, but Symphonia decodes
+    // only the AAC core at half of it, so the decoded rate is what counts.
+    let mut rate = track
         .codec_params
         .sample_rate
         .context("No audio sample rate")?;
     ensure!(rate > 0, "Invalid audio sample rate");
+    let mut rate_known = false;
     let time_base = track.codec_params.time_base.context("No audio time base")?;
-    let mut decoder =
-        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+    let mut decoder = symphonia::default::get_codecs().make(
+        &decoder_params(&track.codec_params),
+        &DecoderOptions::default(),
+    )?;
     format.seek(
         SeekMode::Accurate,
         SeekTo::Time {
@@ -318,8 +331,7 @@ fn transcribe_with_request(
     let mut lines = Vec::new();
     let mut samples = Vec::new();
     let mut offset = from;
-    let window = rate as usize * 30;
-    let mut infer = |audio: &[f32], offset: f64| -> Result<()> {
+    let mut infer = |audio: &[f32], offset: f64, rate: u32| -> Result<()> {
         request.check()?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some(&language));
@@ -361,12 +373,22 @@ fn transcribe_with_request(
         if packet_start >= to {
             break;
         }
-        let decoded = decoder.decode(&packet)?;
+        // A damaged packet costs a few milliseconds of audio, not the chapter.
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            Err(Error::DecodeError(_) | Error::IoError(_)) => continue,
+            Err(error) => return Err(error.into()),
+        };
         let channels = decoded.spec().channels.count();
+        if !rate_known {
+            rate = decoded.spec().rate;
+            rate_known = true;
+        }
         ensure!(
-            channels > 0 && decoded.spec().rate == rate,
+            channels > 0 && rate > 0 && decoded.spec().rate == rate,
             "Audio format changed during transcription"
         );
+        let window = rate as usize * 30;
         let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
         buffer.copy_interleaved_ref(decoded);
         for (index, frame) in buffer.samples().chunks(channels).enumerate() {
@@ -376,20 +398,70 @@ fn transcribe_with_request(
             }
         }
         while samples.len() >= window {
-            infer(&samples[..window], offset)?;
+            infer(&samples[..window], offset, rate)?;
             samples.drain(..window);
             offset += 30.;
         }
     }
     if !samples.is_empty() {
-        infer(&samples, offset)?;
+        infer(&samples, offset, rate)?;
     }
     Ok(lines)
+}
+
+/// Some Audible AAC-LC files set "depends on core coder" in their two-byte
+/// AudioSpecificConfig without the delay that should follow. Apple's decoder
+/// ignores it; Symphonia stops with "unexpected end of bitstream". The flag
+/// means nothing for AAC-LC, so it's cleared.
+fn decoder_params(
+    params: &symphonia::core::codecs::CodecParameters,
+) -> symphonia::core::codecs::CodecParameters {
+    let mut params = params.clone();
+    if let Some(config) = params.extra_data.as_mut()
+        && config.len() == 2
+        && config[0] >> 3 == 2
+    {
+        config[1] &= !0b111;
+    }
+    params
+}
+
+/// Frees the loaded model before the process exits. ggml's Metal backend
+/// asserts at exit while a model is still loaded, which crashed the app on
+/// quit after read along had run. Skipped if a transcription holds it.
+pub fn shutdown() {
+    if let Ok(mut context) = CONTEXT.try_lock() {
+        context.take();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_languages_the_model_handles_are_offered() {
+        assert_eq!(language("en-US").unwrap(), "en");
+        assert_eq!(language("yue-CN").unwrap(), "zh");
+        assert!(language("ml-IN").is_err());
+        assert!(language("hi-IN").is_err());
+    }
+
+    #[test]
+    fn a_stray_core_coder_flag_is_cleared_for_aac_lc() {
+        let mut params = symphonia::core::codecs::CodecParameters::new();
+        params.with_extra_data(vec![0x12, 0x12].into_boxed_slice());
+        assert_eq!(
+            decoder_params(&params).extra_data.as_deref(),
+            Some(&[0x12, 0x10][..])
+        );
+        // HE-AAC and longer configs are left alone.
+        params.with_extra_data(vec![0x13, 0x12, 0x56, 0xe5].into_boxed_slice());
+        assert_eq!(
+            decoder_params(&params).extra_data.as_deref(),
+            Some(&[0x13, 0x12, 0x56, 0xe5][..])
+        );
+    }
 
     #[test]
     fn prefetch_runs_only_when_idle() {

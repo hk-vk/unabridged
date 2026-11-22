@@ -59,6 +59,13 @@ pub enum Engine {
 
 /// Prefer Apple's installed helper, falling back only when unavailable or unsupported.
 pub fn engine(locale: &str) -> Engine {
+    // Testing: `UNABRIDGED_READ_ALONG_ENGINE=whisper` (or `apple`) picks the
+    // engine on a Mac that has both.
+    match std::env::var("UNABRIDGED_READ_ALONG_ENGINE").as_deref() {
+        Ok("whisper") => return Engine::Whisper,
+        Ok("apple") => return Engine::Apple,
+        _ => {}
+    }
     static ENGINES: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Engine>>> =
         std::sync::OnceLock::new();
     let engines = ENGINES.get_or_init(Mutex::default);

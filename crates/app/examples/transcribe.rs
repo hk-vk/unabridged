@@ -20,6 +20,13 @@ mod transcript {
 }
 
 fn main() -> anyhow::Result<()> {
+    let result = run();
+    // Free the model before exit; ggml's Metal backend asserts otherwise.
+    whisper::shutdown();
+    result
+}
+
+fn run() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     anyhow::ensure!(args.len() == 4, "Usage: transcribe FILE FROM TO LOCALE");
     let from: f64 = args[1].parse()?;
