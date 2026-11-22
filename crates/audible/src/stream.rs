@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use reqwest::StatusCode;
 use reqwest::header::{RANGE, RETRY_AFTER, USER_AGENT};
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,13 @@ pub struct StreamOptions {
     /// Seconds of audio added on both sides of a [`StreamSource::prefetch_time`]
     /// window (AAC decoder pre-roll).
     pub prefetch_margin: f64,
+    /// Request size for [`StreamSource::prefetch_time`]: small, so each
+    /// request finishes well within `request_timeout` even on a slow
+    /// connection.
+    pub prefetch_chunk: u64,
+    /// How many [`prefetch_time`](StreamSource::prefetch_time) requests run
+    /// at once, so small requests still fill a fast connection.
+    pub prefetch_parallel: usize,
     /// Retries for transient failures (network errors, 5xx, 429).
     pub retry: RetryPolicy,
     /// Timeout for a single request, body included.
@@ -80,6 +88,8 @@ impl Default for StreamOptions {
             min_fetch: 512 * 1024,
             max_fetch: 4 * 1024 * 1024,
             prefetch_margin: 3.0,
+            prefetch_chunk: 512 * 1024,
+            prefetch_parallel: 4,
             retry: RetryPolicy {
                 max_attempts: 4,
                 base_delay: Duration::from_millis(300),
@@ -404,16 +414,32 @@ impl StreamSource {
             spans.iter().map(|&(a, b)| st.ranges.missing(a, b)).sum()
         };
         progress(0.0);
-        let mut done = 0u64;
+        // Small chunks, several at a time, in order: a slow connection still
+        // finishes each request in time, a fast one stays busy, and the
+        // start of the window (what read along needs first) arrives first.
+        // Chunks end on sample boundaries; otherwise neighbours' requests,
+        // widened to whole samples, overlap and wait on each other.
+        let chunk = self.options.prefetch_chunk.max(1);
+        let mut chunks = Vec::new();
         for (a, b) in spans {
             let mut pos = a;
             while pos < b {
-                let end = pos.saturating_add(self.options.max_fetch).min(b);
-                done += self.ensure(pos, end).await?;
-                if total > 0 {
-                    progress((done as f64 / total as f64).min(1.0) as f32);
-                }
+                let end = self
+                    .codec
+                    .align_end(pos.saturating_add(chunk))
+                    .clamp(pos + 1, b);
+                chunks.push((pos, end));
                 pos = end;
+            }
+        }
+        let mut fetches = futures_util::stream::iter(chunks)
+            .map(|(a, b)| self.ensure(a, b))
+            .buffered(self.options.prefetch_parallel.max(1));
+        let mut done = 0u64;
+        while let Some(fetched) = fetches.next().await {
+            done += fetched?;
+            if total > 0 {
+                progress((done as f64 / total as f64).min(1.0) as f32);
             }
         }
         progress(1.0);
@@ -1311,6 +1337,7 @@ mod tests {
     struct Ranged {
         data: Arc<Vec<u8>>,
         hits: Arc<AtomicUsize>,
+        delay: Duration,
     }
 
     impl Respond for Ranged {
@@ -1337,6 +1364,7 @@ mod tests {
             ResponseTemplate::new(206)
                 .insert_header("Content-Range", format!("bytes {a}-{b}/{len}").as_str())
                 .set_body_bytes(self.data[a as usize..=b as usize].to_vec())
+                .set_delay(self.delay)
         }
     }
 
@@ -1347,6 +1375,11 @@ mod tests {
 
     impl Cdn {
         async fn serving(data: Vec<u8>) -> Self {
+            Self::serving_slowly(data, Duration::ZERO).await
+        }
+
+        /// Each ranged response waits `delay` before it's sent.
+        async fn serving_slowly(data: Vec<u8>, delay: Duration) -> Self {
             let server = MockServer::start().await;
             let hits = Arc::new(AtomicUsize::new(0));
             Mock::given(method("GET"))
@@ -1354,6 +1387,7 @@ mod tests {
                 .respond_with(Ranged {
                     data: Arc::new(data),
                     hits: hits.clone(),
+                    delay,
                 })
                 .mount(&server)
                 .await;
@@ -1398,6 +1432,8 @@ mod tests {
             min_fetch: 100,
             max_fetch: 1000,
             prefetch_margin: 0.0,
+            prefetch_chunk: 100,
+            prefetch_parallel: 4,
             retry: RetryPolicy {
                 max_attempts: 2,
                 base_delay: Duration::from_millis(1),
@@ -1653,6 +1689,34 @@ mod tests {
         let last = samples.last().unwrap().1;
         assert!(src.lock().ranges.covers(first, last));
         assert!(src.prefetch_time(2.0, 1.0, &|_| {}).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn prefetch_fetches_small_chunks_in_parallel() {
+        let dir = tempfile::tempdir().unwrap();
+        let book = aaxc_book(dir.path());
+        let delay = Duration::from_millis(100);
+        let cdn = Cdn::serving_slowly(book.encrypted.clone(), delay).await;
+        let src = open(cdn.url(), aaxc(), &dir.path().join("p.m4b"), small()).await;
+        let before = cdn.hits();
+        let started = std::time::Instant::now();
+        src.prefetch_time(0.0, 2.0, &|_| {}).await.unwrap();
+        let elapsed = started.elapsed();
+        let requests = cdn.hits() - before;
+        assert!(requests >= 8, "small chunks: {requests} requests");
+        // One at a time would take requests × delay.
+        assert!(
+            elapsed < delay * requests as u32 / 2,
+            "{requests} requests took {elapsed:?}"
+        );
+        // Everything asked for is cached, in order, and decrypts right.
+        for (first, last) in src.time_spans(0.0, 2.0) {
+            assert!(src.lock().ranges.covers(first, last));
+            assert_eq!(
+                src.read(first, (last - first) as usize).await.unwrap(),
+                &book.plain[first as usize..last as usize]
+            );
+        }
     }
 
     #[tokio::test]

@@ -2,6 +2,9 @@
 //! speed and volume.
 use crate::*;
 
+/// How many chapters after the one playing read along prepares ahead.
+const READ_AHEAD_CHAPTERS: usize = 2;
+
 impl Shell {
     pub(crate) fn load_chapters(&mut self, cx: &mut Context<Self>) {
         let Some(player) = &self.player else { return };
@@ -740,14 +743,18 @@ impl Shell {
             locale,
             stream: stream.clone(),
         };
+        // The next two chapters are made ready in the background, so read
+        // along has them even if the connection drops later.
         let next = active
             .chapters
             .iter()
-            .find(|chapter| chapter.start_offset_ms as f64 / 1000. >= end - 0.5)
+            .filter(|chapter| chapter.start_offset_ms as f64 / 1000. >= end - 0.5)
+            .take(READ_AHEAD_CHAPTERS)
             .map(|chapter| {
                 let next_start = chapter.start_offset_ms as f64 / 1000.;
                 span(next_start, next_start + chapter.length_ms as f64 / 1000.)
-            });
+            })
+            .collect();
         self.read_along = Some(ReadAlong {
             asin: active.asin.clone(),
             start_ms,

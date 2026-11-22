@@ -453,7 +453,7 @@ fn for_display(locale: &str, mut line: Line) -> Line {
 /// the lines being listened to appear within seconds even deep into a long
 /// chapter; the part before the playhead follows and is added in one go,
 /// so the list moves once instead of with every line.
-pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
+pub fn start(span: Span, next: Vec<Span>, playhead: f64) -> SharedJob {
     if let Some(lines) = cached(&span.key, &span.asin, span.locale, span.start_ms()) {
         let job = Arc::new(Mutex::new(Job {
             phase: Phase::Ready,
@@ -462,9 +462,14 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
                 .map(|line| for_display(span.locale, line))
                 .collect(),
         }));
-        if let Some(next) = next {
+        if !next.is_empty() {
             let watch = Arc::downgrade(&job);
-            std::thread::spawn(move || prefetch(next, &|| watch.strong_count() == 0));
+            std::thread::spawn(move || {
+                let stop = || watch.strong_count() == 0;
+                for span in next {
+                    prefetch(span, &stop);
+                }
+            });
         }
         return job;
     }
@@ -541,8 +546,8 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
             Err(message) if message == STOPPED => return,
             Err(message) => set_phase(&worker, Phase::Failed(message)),
         }
-        if let Some(next) = next {
-            prefetch(next, &stop);
+        for span in next {
+            prefetch(span, &stop);
         }
     });
     job
