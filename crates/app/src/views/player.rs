@@ -300,14 +300,41 @@ impl Shell {
                                         }
                                     })
                                 });
-                                // The bar shows while searching; otherwise the
-                                // search icon in the dock opens it.
+                                // The bar shows while searching; otherwise a
+                                // small search button floats over the
+                                // transcript's top-right corner.
                                 let search_open = !query.is_empty()
                                     || gpui_kit::Focusable::focus_handle(
                                         &self.transcript_search,
                                         cx,
                                     )
                                     .is_focused(window);
+                                let search_button = (search_summary.is_some() && !search_open)
+                                    .then(|| {
+                                        div().absolute().top_0().right_0().child(
+                                            IconButton::new(
+                                                "open-transcript-search",
+                                                Icon::Search,
+                                                15.,
+                                            )
+                                            .hit_area(30.)
+                                            .color(palette.on_field_muted)
+                                            .hover_fill(palette.on_field_track)
+                                            .tooltip("Search this chapter (⌘F)")
+                                            .on_click(
+                                                cx.listener(|this, _, window, cx| {
+                                                    window.focus(
+                                                        &gpui_kit::Focusable::focus_handle(
+                                                            &this.transcript_search,
+                                                            cx,
+                                                        ),
+                                                        cx,
+                                                    );
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        )
+                                    });
                                 let search_bar =
                                     search_summary.filter(|_| search_open).map(|match_count| {
                                         self.transcript_search_bar(
@@ -318,6 +345,7 @@ impl Shell {
                                         )
                                     });
                                 div()
+                                    .relative()
                                     .flex_1()
                                     .min_w_0()
                                     .min_h_0()
@@ -338,6 +366,8 @@ impl Shell {
                                             ),
                                         ),
                                     )
+                                    // Drawn last so it sits over the lines.
+                                    .children(search_button)
                             })
                     } else {
                         // Cover and the book's name side by side, centred.
@@ -539,23 +569,7 @@ impl Shell {
                     ))
                     .child(read_chip)
                     .when(self.read_along_open, |el| {
-                        el.child(self.read_along_size_control(palette, cx)).child(
-                            IconButton::new("open-transcript-search", Icon::Search, 15.)
-                                .hit_area(30.)
-                                .color(palette.on_field)
-                                .hover_fill(palette.on_field_track)
-                                .tooltip("Search this chapter (⌘F)")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    window.focus(
-                                        &gpui_kit::Focusable::focus_handle(
-                                            &this.transcript_search,
-                                            cx,
-                                        ),
-                                        cx,
-                                    );
-                                    cx.notify();
-                                })),
-                        )
+                        el.child(self.read_along_size_control(palette, cx))
                     }),
             )
             .child(

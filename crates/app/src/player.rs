@@ -8,8 +8,15 @@
 /// Bytes of a playable audio file, readable at any offset from any thread.
 pub trait StreamRead: Send + Sync + 'static {
     /// Fill `buf` with bytes at `offset`; return how many were written (0 = end of file).
-    /// May block on the network for a while. Err = give up this request.
-    fn read_at(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<usize>;
+    /// May block on the network for a while; should give up soon after
+    /// `closed` turns true (the player that asked is gone). Err = give up
+    /// this request.
+    fn read_at(
+        &self,
+        offset: u64,
+        buf: &mut [u8],
+        closed: &dyn Fn() -> bool,
+    ) -> anyhow::Result<usize>;
 }
 
 /// A seek target that cannot run past the end of a known duration.
@@ -35,7 +42,10 @@ mod platform {
         panic::{AssertUnwindSafe, catch_unwind},
         path::Path,
         ptr::NonNull,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
     };
 
     type ReadFn = extern "C" fn(*const c_void, u64, *mut u8, usize) -> i64;
@@ -72,6 +82,8 @@ mod platform {
     struct StreamContext {
         source: Arc<dyn StreamRead>,
         error: Mutex<Option<String>>,
+        /// The player closed: reads still waiting on the network stop.
+        closed: AtomicBool,
     }
 
     impl StreamContext {
@@ -89,7 +101,10 @@ mod platform {
         // stays alive until `release_stream`; buf points at `len` writable bytes.
         let ctx = unsafe { &*ctx.cast::<StreamContext>() };
         let buf = unsafe { std::slice::from_raw_parts_mut(buf, len) };
-        match catch_unwind(AssertUnwindSafe(|| ctx.source.read_at(offset, buf))) {
+        let closed = || ctx.closed.load(Ordering::Relaxed);
+        match catch_unwind(AssertUnwindSafe(|| {
+            ctx.source.read_at(offset, buf, &closed)
+        })) {
             Ok(Ok(n)) => i64::try_from(n.min(len)).unwrap_or(i64::MAX),
             Ok(Err(error)) => {
                 ctx.fail(format!("{error:#}"));
@@ -139,6 +154,7 @@ mod platform {
             let stream = Arc::new(StreamContext {
                 source,
                 error: Mutex::new(None),
+                closed: AtomicBool::new(false),
             });
             let ctx = Arc::into_raw(stream.clone()).cast::<c_void>();
             // The Objective-C side owns ctx from here and calls release_stream exactly once.
@@ -234,7 +250,11 @@ mod platform {
     }
     impl Drop for Player {
         fn drop(&mut self) {
-            // Reads still in flight keep the stream context alive until they return.
+            // Reads still in flight keep the stream context alive until they
+            // return, which they now do promptly.
+            if let Some(stream) = &self.stream {
+                stream.closed.store(true, Ordering::Relaxed);
+            }
             unsafe { ba_player_close(self.ptr()) }
         }
     }
@@ -390,7 +410,12 @@ mod tests {
     }
 
     impl StreamRead for Memory {
-        fn read_at(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<usize> {
+        fn read_at(
+            &self,
+            offset: u64,
+            buf: &mut [u8],
+            _closed: &dyn Fn() -> bool,
+        ) -> anyhow::Result<usize> {
             self.reads.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(self.delay);
             if let Some(failure) = self.failure {

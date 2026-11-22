@@ -312,7 +312,7 @@ impl Shell {
 
     pub(crate) fn skip(&mut self, seconds: f64, cx: &mut Context<Self>) {
         if let Some(active) = &self.player {
-            active.player.seek(active.player.position() + seconds);
+            active.player.skip(seconds);
             self.sync_position(cx);
             cx.notify();
         }
@@ -447,6 +447,9 @@ pub(crate) struct PlayerSlot {
     position: std::cell::Cell<f64>,
     /// The listener moved the playhead while it loaded.
     moved: std::cell::Cell<bool>,
+    /// Skips (±30 s) pressed while it loaded, applied to the saved place
+    /// once that's known: before then the place is only an estimate.
+    skipped: std::cell::Cell<f64>,
     duration: f64,
     rate: std::cell::Cell<f32>,
     volume: std::cell::Cell<f32>,
@@ -471,6 +474,7 @@ impl PlayerSlot {
             audio: None,
             position: std::cell::Cell::new(position),
             moved: std::cell::Cell::new(false),
+            skipped: std::cell::Cell::new(0.),
             duration,
             rate: std::cell::Cell::new(rate),
             volume: std::cell::Cell::new(volume),
@@ -490,17 +494,23 @@ impl PlayerSlot {
     fn fill(&mut self, audio: player::Player, saved: Option<f64>) -> anyhow::Result<()> {
         audio.set_rate(self.rate.get());
         audio.set_volume(self.volume.get());
-        let position = if self.moved.get() {
-            self.position.get()
-        } else {
-            saved.unwrap_or(self.position.get())
-        };
-        audio.seek(position);
+        audio.seek(self.start(saved));
         if self.wants_play.get() {
             audio.play()?;
         }
         self.audio = Some(audio);
         Ok(())
+    }
+
+    /// Where the audio starts once connected: the place chosen while
+    /// loading, or else the saved place (`saved`, seconds) moved by any
+    /// skips pressed meanwhile.
+    fn start(&self, saved: Option<f64>) -> f64 {
+        if self.moved.get() {
+            self.position.get()
+        } else {
+            (saved.unwrap_or(self.position.get()) + self.skipped.get()).max(0.)
+        }
     }
 
     fn fail(&mut self, error: String) {
@@ -529,9 +539,20 @@ impl PlayerSlot {
     }
 
     pub(crate) fn position(&self) -> f64 {
-        self.audio
-            .as_ref()
-            .map_or_else(|| self.position.get(), player::Player::position)
+        match &self.audio {
+            Some(audio) => audio.position(),
+            None => self.start(None),
+        }
+    }
+
+    /// Moves `seconds` from the current place. While loading it's kept
+    /// relative, so it applies to the saved place rather than the estimate.
+    pub(crate) fn skip(&self, seconds: f64) {
+        match &self.audio {
+            Some(audio) => audio.seek(audio.position() + seconds),
+            None if self.moved.get() => self.seek(self.position.get() + seconds),
+            None => self.skipped.set(self.skipped.get() + seconds),
+        }
     }
 
     pub(crate) fn duration(&self) -> f64 {
@@ -987,6 +1008,24 @@ impl Follow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skips_while_loading_apply_to_the_saved_place() {
+        // The library's estimate says 1:00:00; the real saved place is 2:00:00.
+        let slot = PlayerSlot::loading(3600., 36_000., 1., 1.);
+        slot.skip(-30.);
+        slot.skip(-30.);
+        assert_eq!(slot.position(), 3540.);
+        assert_eq!(slot.start(Some(7200.)), 7140.);
+        // A scrub is a real place, and later skips move from it.
+        slot.seek(100.);
+        slot.skip(30.);
+        assert_eq!(slot.start(Some(7200.)), 130.);
+        // Never before the start of the book.
+        let slot = PlayerSlot::loading(10., 600., 1., 1.);
+        slot.skip(-30.);
+        assert_eq!(slot.start(Some(5.)), 0.);
+    }
 
     #[test]
     fn a_failed_slot_says_so_and_refuses_to_play() {

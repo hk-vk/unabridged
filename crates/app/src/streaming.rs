@@ -6,13 +6,21 @@
 //! going back over a stretch, or reopening a recent book, doesn't fetch it
 //! again. Only the few most recently streamed books are kept.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use audible::{Asin, Audible, AudibleClient, StreamSource};
 
 /// How many books keep their stream cache.
 const KEEP_BOOKS: usize = 3;
+
+/// The open stream for each cache file. Two streams on one file would undo
+/// each other's writes (a fresh one empties the file the other is filling),
+/// so a book being opened again, while it still loads or while read along
+/// holds it, gets the stream already open.
+type OpenSlot = Arc<Mutex<Weak<Stream>>>;
+static OPEN: Mutex<Option<HashMap<PathBuf, OpenSlot>>> = Mutex::new(None);
 
 /// An open stream for one book.
 pub struct Stream {
@@ -26,10 +34,44 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Licenses `asin` and reads the start of its file. Blocking: run it on a
-    /// background thread.
+    /// Licenses `asin` and reads the start of its file, or returns the stream
+    /// already open for it. Blocking: run it on a background thread.
     pub fn open(
         key: &str,
+        asin: &Asin,
+        quality: crate::backend::DownloadQuality,
+    ) -> anyhow::Result<Arc<Self>> {
+        let directory = cache_directory(key)?;
+        let cache = directory.join(cache_name(asin, quality));
+        let slot = {
+            let mut open = OPEN
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Stream lock poisoned"))?;
+            let open = open.get_or_insert_with(HashMap::new);
+            // Forget slots whose stream has gone, unless one is opening.
+            open.retain(|_, slot| {
+                Arc::strong_count(slot) > 1
+                    || slot
+                        .try_lock()
+                        .map_or(true, |stream| stream.strong_count() > 0)
+            });
+            open.entry(cache.clone()).or_default().clone()
+        };
+        let mut current = slot
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Stream lock poisoned"))?;
+        if let Some(stream) = current.upgrade() {
+            touch(&cache);
+            return Ok(stream);
+        }
+        let stream = Self::open_at(&directory, cache, asin, quality)?;
+        *current = Arc::downgrade(&stream);
+        Ok(stream)
+    }
+
+    fn open_at(
+        directory: &Path,
+        cache: PathBuf,
         asin: &Asin,
         quality: crate::backend::DownloadQuality,
     ) -> anyhow::Result<Arc<Self>> {
@@ -41,15 +83,26 @@ impl Stream {
         let _guard = runtime.enter();
         let client = crate::backend::client()?;
         let quality = quality.audible();
-        let directory = cache_directory(key)?;
-        std::fs::create_dir_all(&directory)?;
-        let cache = directory.join(format!("{asin}.m4b"));
+        std::fs::create_dir_all(directory)?;
+        let had_cache = cache
+            .with_file_name(format!("{}.ranges", cache_file_name(&cache)))
+            .exists();
         let source = runtime.block_on(async {
             let license = client.license(asin, quality).await?;
-            StreamSource::open(client.http().reqwest().clone(), &license, cache.clone()).await
+            let http = client.http().reqwest().clone();
+            match StreamSource::open(http.clone(), &license, cache.clone()).await {
+                // A cache that no longer reads as audio (damaged, say, by a
+                // crash) would fail the same way on every retry: start it
+                // over once.
+                Err(audible::Error::InvalidMedia(_) | audible::Error::Crypto(_)) if had_cache => {
+                    remove_cache(&cache);
+                    StreamSource::open(http, &license, cache.clone()).await
+                }
+                result => result,
+            }
         })?;
         touch(&cache);
-        prune(&directory, &cache);
+        prune(directory, &cache);
         Ok(Arc::new(Self {
             source,
             client,
@@ -114,13 +167,63 @@ impl Stream {
 }
 
 impl crate::player::StreamRead for Stream {
-    fn read_at(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<usize> {
-        let bytes =
-            self.with_fresh_url(|| self.runtime.block_on(self.source.read(offset, buf.len())))?;
+    fn read_at(
+        &self,
+        offset: u64,
+        buf: &mut [u8],
+        closed: &dyn Fn() -> bool,
+    ) -> anyhow::Result<usize> {
+        let bytes = self.with_fresh_url(|| {
+            self.runtime.block_on(async {
+                // A closed player's reads stop (dropping a read part-way is
+                // safe) instead of tying up a thread for minutes on a bad
+                // network.
+                let read = std::pin::pin!(self.source.read(offset, buf.len()));
+                let closing = std::pin::pin!(async {
+                    while !closed() {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                });
+                match futures_select(read, closing).await {
+                    Some(result) => result,
+                    None => Err(audible::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "Playback was closed",
+                    ))),
+                }
+            })
+        })?;
         let n = bytes.len().min(buf.len());
         buf[..n].copy_from_slice(&bytes[..n]);
         Ok(n)
     }
+}
+
+/// `<asin>-<quality>.m4b`: each quality is a different file, so a cache is
+/// never filled with two qualities' bytes.
+fn cache_name(asin: &Asin, quality: crate::backend::DownloadQuality) -> String {
+    format!("{asin}-{}.m4b", quality.label().to_ascii_lowercase())
+}
+
+fn cache_file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The first of `read` and `closing` to finish: `Some` with the read's
+/// result, or `None` if closing won.
+async fn futures_select<T>(
+    mut read: std::pin::Pin<&mut impl std::future::Future<Output = T>>,
+    mut closing: std::pin::Pin<&mut impl std::future::Future<Output = ()>>,
+) -> Option<T> {
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(value) = read.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(value));
+        }
+        closing.as_mut().poll(cx).map(|()| None)
+    })
+    .await
 }
 
 fn is_expired(error: &audible::Error) -> bool {
@@ -189,7 +292,11 @@ fn remove_cache(path: &Path) {
 /// instead.
 pub fn forget(key: &str, asin: &Asin) {
     if let Ok(directory) = cache_directory(key) {
+        // The name before qualities were kept apart, too.
         remove_cache(&directory.join(format!("{asin}.m4b")));
+        for quality in crate::backend::DownloadQuality::ALL {
+            remove_cache(&directory.join(cache_name(asin, quality)));
+        }
     }
 }
 
@@ -217,7 +324,7 @@ mod tests {
         let mut buf = vec![0u8; 256 * 1024];
         let middle = stream.len() / 2;
         let started = std::time::Instant::now();
-        let n = crate::player::StreamRead::read_at(&*stream, middle, &mut buf).unwrap();
+        let n = crate::player::StreamRead::read_at(&*stream, middle, &mut buf, &|| false).unwrap();
         println!("read {n} bytes mid-book in {:?}", started.elapsed());
         assert_eq!(n, buf.len());
         let started = std::time::Instant::now();
@@ -239,6 +346,46 @@ mod tests {
         let text = String::from_utf8_lossy(&output.stdout);
         println!("{text}");
         assert!(text.contains("\"text\""), "no transcript lines");
+    }
+
+    #[test]
+    fn a_read_stops_once_its_player_closes() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let closed = std::sync::atomic::AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        let result = runtime.block_on(async {
+            // A read stuck on the network.
+            let read = std::pin::pin!(std::future::pending::<u8>());
+            let closing = std::pin::pin!(async {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                closed.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+            futures_select(read, closing).await
+        });
+        assert_eq!(result, None);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        // A read that finishes first wins.
+        let result = runtime.block_on(futures_select(
+            std::pin::pin!(async { 7 }),
+            std::pin::pin!(std::future::pending::<()>()),
+        ));
+        assert_eq!(result, Some(7));
+    }
+
+    #[test]
+    fn each_quality_has_its_own_cache_file() {
+        let asin = Asin::new("B0G3CHBFWR").unwrap();
+        assert_eq!(
+            cache_name(&asin, crate::backend::DownloadQuality::High),
+            "B0G3CHBFWR-high.m4b"
+        );
+        assert_eq!(
+            cache_name(&asin, crate::backend::DownloadQuality::Standard),
+            "B0G3CHBFWR-standard.m4b"
+        );
     }
 
     #[test]
