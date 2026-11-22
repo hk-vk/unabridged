@@ -2,6 +2,11 @@
 
 What changed in each release of Unabridged. The release workflow copies a version's section into its GitHub release notes, so add one before tagging.
 
+## 0.3.0
+
+- **Read along on macOS 14 and 15.** Macs without Apple's speech recognition (it needs macOS 26) now read along too, with an open Whisper model that runs on your Mac. The first time, choose **Most accurate** (575 MB) or **Smaller** (265 MB) and it downloads once.
+- **Sponsor.** If you enjoy Unabridged, you can now support it on [GitHub Sponsors](https://github.com/sponsors/hk-vk).
+
 ## 0.2.0
 
 - **Stream any book.** Play starts a book straight away without downloading it first. Downloading is now optional: a small download icon next to Play saves the book for offline listening. Recently streamed parts are cached, so going back over a stretch doesn't fetch it again.
@@ -10,8 +15,6 @@ What changed in each release of Unabridged. The release workflow copies a versio
 - **Search the transcript.** The search button next to the chapter name (or ⌘F) finds a word in the chapter, or a chapter by name; pick a match to jump there.
 - **Read along keeps up on slow connections.** Chapters are fetched in small pieces, several at once, and the next two chapters are made ready while you listen.
 - **Recovers from a dropped connection.** A stream that stalls reconnects by itself, and Play on a book that failed to load tries again from where it got to.
-- **Sign-in no longer gets stuck.** If the app doesn't move on after you sign in with Amazon, "Not continuing? Paste the address yourself" shows what Amazon's error page looks like and where to copy its address, with a box to paste it into.
-- **Progress shows where you are.** Percent and time left follow your place on this Mac, not Audible's last saved figure, which could lag far behind.
 - **Sign-in no longer gets stuck.** If the app doesn't move on after you sign in with Amazon, "Not continuing? Paste the address yourself" shows what Amazon's error page looks like and where to copy its address, with a box to paste it into.
 - **Progress shows where you are.** Percent and time left follow your place on this Mac, not Audible's last saved figure, which could lag far behind.
 
