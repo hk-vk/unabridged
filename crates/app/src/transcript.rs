@@ -401,6 +401,13 @@ fn transcribe(
 /// How far before the playhead transcription starts, so the sentence being
 /// spoken is caught whole.
 const LEAD_IN: f64 = 15.;
+/// First streamed stretch fetched and transcribed before the rest of the
+/// chapter, so the visible lines around the playhead appear within seconds.
+const STREAM_FIRST_WINDOW: f64 = 60.;
+/// Follow-up streamed stretches fetched and transcribed in the background.
+const STREAM_CHUNK: f64 = 180.;
+/// A leftover tail shorter than this is folded into the previous stretch.
+const STREAM_MIN_TAIL: f64 = 30.;
 
 /// Where to start transcribing a chapter when listening from `playhead`:
 /// just before it, or the chapter start when the playhead is near it.
@@ -411,6 +418,31 @@ fn split_point(span: &Span, playhead: f64) -> f64 {
     } else {
         split
     }
+}
+
+/// Splits a streamed range `from..to` into a short first stretch (for fast
+/// first-page visibility) followed by background stretches for the rest.
+fn stream_windows(from: f64, to: f64) -> Vec<(f64, f64)> {
+    if !from.is_finite() || !to.is_finite() || to <= from {
+        return Vec::new();
+    }
+    if to - from <= STREAM_FIRST_WINDOW + STREAM_MIN_TAIL {
+        return vec![(from, to)];
+    }
+    let mut windows = Vec::new();
+    let first_end = from + STREAM_FIRST_WINDOW;
+    windows.push((from, first_end));
+    let mut cursor = first_end;
+    while cursor < to {
+        if to - cursor <= STREAM_CHUNK + STREAM_MIN_TAIL {
+            windows.push((cursor, to));
+            break;
+        }
+        let end = cursor + STREAM_CHUNK;
+        windows.push((cursor, end));
+        cursor = end;
+    }
+    windows
 }
 
 /// The cache keeps what the model wrote; this is what read along shows.
@@ -458,33 +490,56 @@ pub fn start(span: Span, next: Option<Span>, playhead: f64) -> SharedJob {
         }
         set_phase(&worker, Phase::Transcribing);
         let split = split_point(&span, playhead);
-        let push = |line: Line| {
+        let mut push = |line: Line| {
             if let Ok(mut job) = worker.lock() {
                 job.lines.push(line);
             }
         };
-        let result = fetch(&span, split, span.end, Some(&worker))
-            .and_then(|()| {
+        let ahead_result = if span.stream.is_some() {
+            let mut ahead = Vec::new();
+            let mut err = None;
+            for (index, (from, to)) in stream_windows(split, span.end).into_iter().enumerate() {
+                // Only show Fetching on the first short stretch while no lines
+                // are visible yet; later chunks fetch silently in the
+                // background while the user reads along.
+                let progress_job = (index == 0).then_some(&worker);
+                if let Err(message) = fetch(&span, from, to, progress_job) {
+                    err = Some(message);
+                    break;
+                }
                 set_phase(&worker, Phase::Transcribing);
-                transcribe(&span, split, span.end, push)
-            })
-            .and_then(|ahead| {
-                if split <= span.start {
-                    return Ok(ahead);
+                match transcribe(&span, from, to, &mut push) {
+                    Ok(lines) => ahead.extend(lines),
+                    Err(message) => {
+                        err = Some(message);
+                        break;
+                    }
                 }
-                fetch(&span, span.start, split, None)?;
-                let mut before = transcribe(&span, span.start, split, |_| {})?;
-                if let Ok(mut job) = worker.lock() {
-                    let shown: Vec<Line> = before
-                        .iter()
-                        .cloned()
-                        .map(|line| for_display(span.locale, line))
-                        .collect();
-                    job.lines.splice(0..0, shown);
-                }
-                before.extend(ahead);
-                Ok(before)
-            });
+            }
+            match err {
+                Some(message) => Err(message),
+                None => Ok(ahead),
+            }
+        } else {
+            transcribe(&span, split, span.end, &mut push)
+        };
+        let result = ahead_result.and_then(|ahead| {
+            if split <= span.start {
+                return Ok(ahead);
+            }
+            fetch(&span, span.start, split, None)?;
+            let mut before = transcribe(&span, span.start, split, |_| {})?;
+            if let Ok(mut job) = worker.lock() {
+                let shown: Vec<Line> = before
+                    .iter()
+                    .cloned()
+                    .map(|line| for_display(span.locale, line))
+                    .collect();
+                job.lines.splice(0..0, shown);
+            }
+            before.extend(ahead);
+            Ok(before)
+        });
         match result {
             Ok(lines) => {
                 store(&span.key, &span.asin, span.locale, span.start_ms(), &lines);
@@ -568,6 +623,24 @@ pub fn current_line(lines: &[Line], position: f64) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_windows_prioritize_the_first_page_then_chunk_the_rest() {
+        assert!(stream_windows(10., 10.).is_empty());
+        assert_eq!(stream_windows(0., 45.), vec![(0., 45.)]);
+        assert_eq!(stream_windows(0., 85.), vec![(0., 85.)]);
+        assert_eq!(
+            stream_windows(0., 600.),
+            vec![(0., 60.), (60., 240.), (240., 420.), (420., 600.)]
+        );
+        // A tiny leftover tail folds into the previous stretch.
+        assert_eq!(stream_windows(0., 255.), vec![(0., 60.), (60., 255.)]);
+        // Mid-chapter start keeps the first window tight around the playhead.
+        assert_eq!(
+            stream_windows(285., 600.),
+            vec![(285., 345.), (345., 525.), (525., 600.)]
+        );
+    }
 
     #[test]
     fn current_line_tracks_the_playhead() {
