@@ -300,9 +300,23 @@ impl Shell {
                                         }
                                     })
                                 });
-                                let search_bar = search_summary.map(|match_count| {
-                                    self.transcript_search_bar(&palette, match_count, window, cx)
-                                });
+                                // The bar shows while searching; otherwise the
+                                // search icon in the dock opens it.
+                                let search_open = !query.is_empty()
+                                    || gpui_kit::Focusable::focus_handle(
+                                        &self.transcript_search,
+                                        cx,
+                                    )
+                                    .is_focused(window);
+                                let search_bar =
+                                    search_summary.filter(|_| search_open).map(|match_count| {
+                                        self.transcript_search_bar(
+                                            &palette,
+                                            match_count,
+                                            window,
+                                            cx,
+                                        )
+                                    });
                                 div()
                                     .flex_1()
                                     .min_w_0()
@@ -525,7 +539,23 @@ impl Shell {
                     ))
                     .child(read_chip)
                     .when(self.read_along_open, |el| {
-                        el.child(self.read_along_size_control(palette, cx))
+                        el.child(self.read_along_size_control(palette, cx)).child(
+                            IconButton::new("open-transcript-search", Icon::Search, 15.)
+                                .hit_area(30.)
+                                .color(palette.on_field)
+                                .hover_fill(palette.on_field_track)
+                                .tooltip("Search this chapter (⌘F)")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    window.focus(
+                                        &gpui_kit::Focusable::focus_handle(
+                                            &this.transcript_search,
+                                            cx,
+                                        ),
+                                        cx,
+                                    );
+                                    cx.notify();
+                                })),
+                        )
                     }),
             )
             .child(
@@ -699,11 +729,7 @@ impl Shell {
                         .hover_fill(palette.on_field_track)
                         .tooltip("Clear search (Esc)")
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.transcript_search
-                                .update(cx, |state, cx| state.clean(window, cx));
-                            this.transcript_match_cursor = None;
-                            this.read_along_follow.followed = None;
-                            cx.notify();
+                            this.close_transcript_search(window, cx);
                         })),
                 )
             })
@@ -720,6 +746,17 @@ impl Shell {
                         .child("⌘F"),
                 )
             })
+    }
+
+    /// Clears the transcript search and closes it back to the dock icon;
+    /// read along follows playback again.
+    pub(crate) fn close_transcript_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.transcript_search
+            .update(cx, |state, cx| state.clean(window, cx));
+        self.transcript_match_cursor = None;
+        self.read_along_follow.followed = None;
+        window.blur(cx);
+        cx.notify();
     }
 
     /// Makes the read along text `delta` steps larger and saves it.
@@ -1072,12 +1109,12 @@ pub(crate) fn read_along_list(
                     .gap(px(12.))
                     .on_click({
                         let entity = entity.clone();
-                        move |_, _, cx| {
+                        // Jump there and go back to following along.
+                        move |_, window, cx| {
                             let _ = entity.update(cx, |this, cx| {
-                                this.transcript_match_cursor = Some(match_pos);
                                 this.seek_fraction(target, cx);
-                                this.read_along_follow.followed = None;
                                 this.mini_follow.followed = None;
+                                this.close_transcript_search(window, cx);
                             });
                         }
                     })
