@@ -163,7 +163,9 @@ static NSError *BAStreamError(NSInteger code, NSString *message) {
         atomic_init(&_seeking, false);
         atomic_init(&_seekTarget, 0.0);
         _item = [AVPlayerItem playerItemWithAsset:asset];
-        _item.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
+        // TimeDomain is Apple's choice for speech. Spectral is meant for
+        // music and makes voices warble and stutter above 1x.
+        _item.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmTimeDomain;
         _player = [AVPlayer playerWithPlayerItem:_item];
         _player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
         _player.defaultRate = 1.0f;
