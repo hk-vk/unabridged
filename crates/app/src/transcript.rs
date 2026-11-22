@@ -286,7 +286,8 @@ fn cache_path(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<Path
             .join(match engine(locale) {
                 Engine::Apple => "apple".into(),
                 Engine::Whisper => format!(
-                    "whisper-base-q8_0-{}",
+                    "whisper-{}-{}",
+                    crate::whisper::selected().id(),
                     crate::whisper::language(locale).ok()?
                 ),
             })

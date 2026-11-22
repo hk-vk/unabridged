@@ -1,7 +1,7 @@
 //! Downloadable, local Whisper transcription for machines without Apple SpeechAnalyzer.
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, ensure};
@@ -20,16 +20,104 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::transcript::Line;
 
-/// Multilingual whisper.cpp base model, quantised to eight bits.
-pub const MODEL_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q8_0.bin";
-/// Verified Hugging Face LFS object size in bytes.
-pub const MODEL_SIZE: u64 = 81_768_585;
-/// SHA-256 of the model payload, not its LFS pointer.
-pub const MODEL_SHA256: &str = "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9";
-/// Rounded-up decimal megabytes for download labels.
-pub const MODEL_MB: u64 = MODEL_SIZE.div_ceil(1_000_000);
-static CONTEXT: Mutex<Option<WhisperContext>> = Mutex::new(None);
+/// The multilingual whisper.cpp models read along can download. Only the
+/// chosen one is kept on disk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Model {
+    /// large-v3-turbo, five-bit: near large-v3 accuracy, and much better than
+    /// the small models with accents and names.
+    #[default]
+    Turbo,
+    /// small, eight-bit: less than half the download, faster on older
+    /// computers.
+    Small,
+}
+
+impl Model {
+    pub const ALL: [Self; 2] = [Self::Turbo, Self::Small];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Turbo => "Most accurate",
+            Self::Small => "Smaller",
+        }
+    }
+
+    /// Names the model in transcript cache paths, so one model's
+    /// transcripts never stand in for another's.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Turbo => "large-v3-turbo-q5_0",
+            Self::Small => "small-q8_0",
+        }
+    }
+
+    fn file(self) -> String {
+        format!("ggml-{}.bin", self.id())
+    }
+
+    fn url(self) -> String {
+        format!(
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
+            self.file()
+        )
+    }
+
+    /// Verified Hugging Face LFS object size in bytes.
+    fn size(self) -> u64 {
+        match self {
+            Self::Turbo => 574_041_195,
+            Self::Small => 264_464_607,
+        }
+    }
+
+    /// SHA-256 of the model payload, not its LFS pointer.
+    fn sha256(self) -> &'static str {
+        match self {
+            Self::Turbo => "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+            Self::Small => "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f",
+        }
+    }
+
+    /// Rounded-up decimal megabytes for download labels.
+    pub fn megabytes(self) -> u64 {
+        self.size().div_ceil(1_000_000)
+    }
+}
+
+/// The model in use, from Settings.
+static SELECTED: AtomicU8 = AtomicU8::new(0);
+
+pub fn selected() -> Model {
+    Model::ALL
+        .get(SELECTED.load(Ordering::Relaxed) as usize)
+        .copied()
+        .unwrap_or_default()
+}
+
+/// Uses `model` from now on. Blocking: deletes the other models' files
+/// (and the base model earlier versions downloaded) so only one is on disk.
+pub fn select(model: Model) {
+    let index = Model::ALL.iter().position(|m| *m == model).unwrap_or(0);
+    SELECTED.store(index as u8, Ordering::Relaxed);
+    let Ok(_guard) = MODEL_IO.lock() else {
+        return;
+    };
+    let Ok(directory) = models_directory() else {
+        return;
+    };
+    let others = Model::ALL
+        .into_iter()
+        .filter(|other| *other != model)
+        .map(Model::file)
+        .chain(["ggml-base-q8_0.bin".to_string()]);
+    for file in others {
+        let _ = std::fs::remove_file(directory.join(&file));
+        let _ = std::fs::remove_file(directory.join(format!("{file}.part")));
+    }
+}
+
+static CONTEXT: Mutex<Option<(Model, WhisperContext)>> = Mutex::new(None);
 static MODEL_IO: Mutex<()> = Mutex::new(());
 static FOREGROUND_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 
@@ -95,16 +183,20 @@ pub enum Status {
     Ready,
 }
 
-fn model_path() -> Result<PathBuf> {
-    Ok(crate::paths::support()?.join("Models/ggml-base-q8_0.bin"))
+fn models_directory() -> Result<PathBuf> {
+    Ok(crate::paths::support()?.join("Models"))
+}
+
+fn model_path(model: Model) -> Result<PathBuf> {
+    Ok(models_directory()?.join(model.file()))
 }
 
 /// Inspect the downloaded model without loading it into memory.
 pub fn status() -> Result<Status> {
     Ok(
-        if model_path()?
+        if model_path(selected())?
             .metadata()
-            .is_ok_and(|m| m.len() == MODEL_SIZE)
+            .is_ok_and(|m| m.len() == selected().size())
         {
             Status::Ready
         } else {
@@ -122,7 +214,8 @@ pub fn download(mut progress: impl FnMut(f32)) -> Result<()> {
         progress(1.);
         return Ok(());
     }
-    let path = model_path()?;
+    let model = selected();
+    let path = model_path(model)?;
     std::fs::create_dir_all(path.parent().context("No models directory")?)?;
     let part = path.with_extension("bin.part");
     let result = tokio::runtime::Builder::new_current_thread()
@@ -130,7 +223,7 @@ pub fn download(mut progress: impl FnMut(f32)) -> Result<()> {
         .build()?
         .block_on(async {
             let mut response = reqwest::Client::new()
-                .get(MODEL_URL)
+                .get(model.url())
                 .send()
                 .await?
                 .error_for_status()?;
@@ -139,14 +232,17 @@ pub fn download(mut progress: impl FnMut(f32)) -> Result<()> {
             let mut received = 0u64;
             while let Some(chunk) = response.chunk().await? {
                 received += chunk.len() as u64;
-                ensure!(received <= MODEL_SIZE, "Speech model exceeds expected size");
+                ensure!(
+                    received <= model.size(),
+                    "Speech model exceeds expected size"
+                );
                 hash.update(&chunk);
                 file.write_all(&chunk)?;
-                progress(received as f32 / MODEL_SIZE as f32);
+                progress(received as f32 / model.size() as f32);
             }
-            ensure!(received == MODEL_SIZE, "Incomplete speech model download");
+            ensure!(received == model.size(), "Incomplete speech model download");
             ensure!(
-                hex::encode(hash.finalize()) == MODEL_SHA256,
+                hex::encode(hash.finalize()) == model.sha256(),
                 "Speech model checksum mismatch"
             );
             file.sync_all()?;
@@ -172,7 +268,7 @@ pub fn remove() -> Result<()> {
         .lock()
         .map_err(|_| anyhow::anyhow!("Speech engine lock failed"))?;
     *context = None;
-    match std::fs::remove_file(model_path()?) {
+    match std::fs::remove_file(model_path(selected())?) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
@@ -327,16 +423,23 @@ fn transcribe_with_request(
     )?;
     decoder.reset();
     let mut context = request.lock(&CONTEXT)?;
-    if context.is_none() {
-        let path = model_path()?;
-        *context = Some(WhisperContext::new_with_params(
-            path.to_str().context("Invalid model path")?,
-            WhisperContextParameters::default(),
-        )?);
+    let model = selected();
+    if context.as_ref().is_none_or(|(loaded, _)| *loaded != model) {
+        // Free the old model before loading the new one.
+        *context = None;
+        let path = model_path(model)?;
+        *context = Some((
+            model,
+            WhisperContext::new_with_params(
+                path.to_str().context("Invalid model path")?,
+                WhisperContextParameters::default(),
+            )?,
+        ));
     }
     let mut state = context
         .as_ref()
         .context("Speech engine unavailable")?
+        .1
         .create_state()?;
     let threads =
         std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1)) as i32;
@@ -450,6 +553,15 @@ pub fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_model_has_its_own_file_and_cache_name() {
+        assert_eq!(Model::Turbo.file(), "ggml-large-v3-turbo-q5_0.bin");
+        assert_eq!(Model::Small.file(), "ggml-small-q8_0.bin");
+        assert_eq!(Model::Turbo.megabytes(), 575);
+        assert_eq!(Model::Small.megabytes(), 265);
+        assert_eq!(selected(), Model::Turbo);
+    }
 
     #[test]
     fn a_stopped_request_gives_up() {

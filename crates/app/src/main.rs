@@ -486,6 +486,7 @@ fn main() {
         }
         sync_app_icon(cx.window_appearance(), cx);
         cx.on_app_quit(|_| async { whisper::shutdown() }).detach();
+        whisper::select(backend::load_playback().speech_model);
         start_updater();
         open_main_window(cx);
     });

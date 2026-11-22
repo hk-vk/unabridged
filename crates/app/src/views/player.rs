@@ -931,9 +931,48 @@ pub(crate) fn read_along_list(
             return transcript_placeholder("Getting ready", palette, mini, reduce_motion);
         }
         transcript::Phase::NeedsModel => {
-            let entity = entity.clone();
             let language = transcript::speech_name(read.locale);
             let whisper = transcript::engine(read.locale) == transcript::Engine::Whisper;
+            let chip = |id: &'static str, label: String| {
+                Chip::new(id)
+                    .label(label)
+                    .icon(Icon::Download, palette.on_field)
+                    .height(ui::metrics::size::POPUP)
+                    .style(ChipStyle::Outline {
+                        outline: palette.on_field_track,
+                        content: palette.on_field,
+                    })
+            };
+            // Where read along uses Whisper, the listener picks the model as
+            // they download it: the accurate one, or the smaller one.
+            let actions = if whisper {
+                crate::whisper::Model::ALL
+                    .into_iter()
+                    .map(|model| {
+                        let entity = entity.clone();
+                        chip(
+                            match model {
+                                crate::whisper::Model::Turbo => "download-whisper-turbo",
+                                crate::whisper::Model::Small => "download-whisper-small",
+                            },
+                            format!("{} ({} MB)", model.label(), model.megabytes()),
+                        )
+                        .on_click(move |_, _, cx| {
+                            let _ = entity
+                                .update(cx, |this, cx| this.download_whisper_model(model, cx));
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                let entity = entity.clone();
+                vec![
+                    chip("download-speech-model", format!("Add {language} speech")).on_click(
+                        move |_, _, cx| {
+                            let _ = entity.update(cx, |this, cx| this.download_speech_model(cx));
+                        },
+                    ),
+                ]
+            };
             return div()
                 .flex()
                 .flex_col()
@@ -942,27 +981,15 @@ pub(crate) fn read_along_list(
                     div()
                         .type_style(ui::text::BODY)
                         .text_color(palette.on_field_muted)
-                        .child(if whisper { format!(
-                            "Read along transcribes on this computer with an open speech model. It’s a one-time download of about {} MB. Nothing leaves your computer.", crate::whisper::MODEL_MB
-                        ) } else { format!(
-                            "Read along uses your Mac’s built-in speech recognition. macOS needs to add {language} speech first. It’s a one-time download that macOS keeps. Nothing leaves your Mac."
-                        ) }),
+                        .child(if whisper {
+                            "Read along transcribes on this computer with an open speech model, a one-time download. The most accurate one is best with accents and names; the smaller one is faster on older computers. Nothing leaves your computer.".to_string()
+                        } else {
+                            format!(
+                                "Read along uses your Mac’s built-in speech recognition. macOS needs to add {language} speech first. It’s a one-time download that macOS keeps. Nothing leaves your Mac."
+                            )
+                        }),
                 )
-                .child(
-                    div().flex().child(
-                        Chip::new("download-speech-model")
-                            .label(if whisper { format!("Download speech model ({} MB)", crate::whisper::MODEL_MB) } else { format!("Add {language} speech") })
-                            .icon(Icon::Download, palette.on_field)
-                            .height(ui::metrics::size::POPUP)
-                            .style(ChipStyle::Outline {
-                                outline: palette.on_field_track,
-                                content: palette.on_field,
-                            })
-                            .on_click(move |_, _, cx| {
-                                let _ = entity.update(cx, |this, cx| this.download_speech_model(cx));
-                            }),
-                    ),
-                )
+                .child(div().flex().flex_wrap().gap(px(8.)).children(actions))
                 .into_any_element();
         }
         transcript::Phase::Downloading(progress) => {

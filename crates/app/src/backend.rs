@@ -901,6 +901,9 @@ pub struct PlaybackPrefs {
     pub volume: Option<f32>,
     #[serde(default)]
     pub download_quality: DownloadQuality,
+    /// Which speech model read along downloads where it uses Whisper.
+    #[serde(default)]
+    pub speech_model: crate::whisper::Model,
 }
 
 /// How good, and how big, new downloads are.

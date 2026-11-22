@@ -202,7 +202,7 @@ impl Shell {
         let caption = if self.speech_model_busy {
             "Updating speech model…".to_string()
         } else if ready {
-            format!("Downloaded, {} MB", crate::whisper::MODEL_MB)
+            format!("Downloaded, {} MB", crate::whisper::selected().megabytes())
         } else {
             "Not downloaded".to_string()
         };
