@@ -16,7 +16,11 @@
 //! the key. Reopening a book reuses the cache only when both match.
 
 use std::fs::{File, OpenOptions};
+use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
@@ -52,6 +56,68 @@ const MAX_FTYP: u64 = 64 * 1024;
 const UTI_M4A: &str = "com.apple.m4a-audio";
 /// UTI for MP3.
 const UTI_MP3: &str = "public.mp3";
+
+fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        file.read_exact_at(buf, offset)
+    }
+    #[cfg(windows)]
+    {
+        read_exact_at_with(buf, offset, |buf, offset| file.seek_read(buf, offset))
+    }
+}
+
+fn write_all_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        file.write_all_at(buf, offset)
+    }
+    #[cfg(windows)]
+    {
+        write_all_at_with(buf, offset, |buf, offset| file.seek_write(buf, offset))
+    }
+}
+
+#[cfg(any(windows, test))]
+fn read_exact_at_with(
+    mut buf: &mut [u8],
+    mut offset: u64,
+    mut read: impl FnMut(&mut [u8], u64) -> io::Result<usize>,
+) -> io::Result<()> {
+    while !buf.is_empty() {
+        match read(buf, offset) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => {
+                buf = &mut buf[n..];
+                offset += n as u64;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn write_all_at_with(
+    mut buf: &[u8],
+    mut offset: u64,
+    mut write: impl FnMut(&[u8], u64) -> io::Result<usize>,
+) -> io::Result<()> {
+    while !buf.is_empty() {
+        match write(buf, offset) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                buf = &buf[n..];
+                offset += n as u64;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
 
 /// Tuning for [`StreamSource`]. The defaults suit playback; tests use tiny
 /// sizes to exercise partial fetches.
@@ -386,7 +452,7 @@ impl StreamSource {
         let end = offset.saturating_add(len as u64).min(self.len);
         self.ensure(offset, end).await?;
         let mut buf = vec![0u8; usize_of(end - offset)?];
-        self.file.read_exact_at(&mut buf, offset)?;
+        read_exact_at(&self.file, &mut buf, offset)?;
         Ok(buf)
     }
 
@@ -541,7 +607,7 @@ impl StreamSource {
         if lo < hi {
             let from = usize_of(lo - start)?;
             let to = usize_of(hi - start)?;
-            self.file.write_all_at(&bytes[from..to], lo)?;
+            write_all_at(&self.file, &bytes[from..to], lo)?;
             let mut st = self.lock();
             st.ranges.insert(lo, hi);
             self.persist(&st);
@@ -982,7 +1048,7 @@ impl HeadReader<'_> {
         }
         if self.ranges.covers(start, end) {
             let mut buf = vec![0u8; usize_of(end - start)?];
-            self.file.read_exact_at(&mut buf, start)?;
+            read_exact_at(self.file, &mut buf, start)?;
             apply_patches(start, &mut buf, self.originals);
             return Ok(buf);
         }
@@ -1324,6 +1390,81 @@ mod tests {
 
     const KEY: [u8; 16] = [0x11; 16];
     const IV: [u8; 16] = [0x22; 16];
+
+    #[test]
+    fn positional_read_handles_short_reads_and_eof() {
+        let source = b"abcdefg";
+        let mut offsets = Vec::new();
+        let mut buf = [0; 6];
+        read_exact_at_with(&mut buf, 1, |buf, offset| {
+            offsets.push(offset);
+            if offsets.len() == 1 {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let n = buf.len().min(2);
+            buf[..n].copy_from_slice(&source[offset as usize..offset as usize + n]);
+            Ok(n)
+        })
+        .unwrap();
+        assert_eq!(&buf, b"bcdefg");
+        assert_eq!(offsets, [1, 1, 3, 5]);
+
+        let error = read_exact_at_with(&mut buf, 5, |buf, offset| {
+            let remaining = &source[offset as usize..];
+            let n = remaining.len().min(buf.len());
+            buf[..n].copy_from_slice(&remaining[..n]);
+            Ok(n)
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        read_exact_at_with(&mut [], 99, |_, _| panic!("empty read")).unwrap();
+        let error = read_exact_at_with(&mut buf, 0, |_, _| {
+            Err(io::ErrorKind::PermissionDenied.into())
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn positional_write_handles_short_writes_and_errors() {
+        let mut output = [0; 8];
+        let mut offsets = Vec::new();
+        write_all_at_with(b"abcde", 1, |buf, offset| {
+            offsets.push(offset);
+            if offsets.len() == 1 {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let n = buf.len().min(2);
+            output[offset as usize..offset as usize + n].copy_from_slice(&buf[..n]);
+            Ok(n)
+        })
+        .unwrap();
+        assert_eq!(&output, b"\0abcde\0\0");
+        assert_eq!(offsets, [1, 1, 3, 5]);
+        let error = write_all_at_with(b"a", 0, |_, _| Ok(0)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+        write_all_at_with(&[], 99, |_, _| panic!("empty write")).unwrap();
+        let error = write_all_at_with(b"a", 0, |_, _| Err(io::ErrorKind::PermissionDenied.into()))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn positional_file_io_uses_explicit_offsets() {
+        use std::io::{Seek, SeekFrom};
+
+        let mut file = tempfile::tempfile().unwrap();
+        file.seek(SeekFrom::Start(100)).unwrap();
+        write_all_at(&file, b"abcdef", 0).unwrap();
+        file.seek(SeekFrom::Start(100)).unwrap();
+        let mut buf = [0; 3];
+        read_exact_at(&file, &mut buf, 2).unwrap();
+        assert_eq!(&buf, b"cde");
+        let error = read_exact_at(&file, &mut buf, 4).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        read_exact_at(&file, &mut [], 100).unwrap();
+        write_all_at(&file, &[], 100).unwrap();
+    }
 
     fn sine() -> Vec<u8> {
         std::fs::read(concat!(
