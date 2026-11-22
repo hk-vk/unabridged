@@ -185,6 +185,40 @@ pub struct Library {
     pub account_key: String,
     #[serde(skip)]
     pub offline: bool,
+    /// When each book was last listened to (Unix seconds), on this Mac or
+    /// any device that syncs with Audible. Books in progress are ordered by it.
+    #[serde(default)]
+    pub listened: std::collections::HashMap<String, i64>,
+}
+
+impl Library {
+    /// Books in progress, most recently listened to first; books with no
+    /// known time keep the library's order after them.
+    pub fn in_progress(&self) -> Vec<&LibraryItem> {
+        let mut items: Vec<_> = self
+            .items
+            .iter()
+            .filter(|item| {
+                crate::books::book_progress(item).unwrap_or(0.) > 0.
+                    && !crate::books::book_finished(item)
+            })
+            .collect();
+        self.sort_by_listened(&mut items);
+        items
+    }
+
+    /// Most recently listened to first, keeping the order of the rest.
+    pub fn sort_by_listened(&self, items: &mut [&LibraryItem]) {
+        items.sort_by_key(|item| {
+            std::cmp::Reverse(self.listened.get(item.asin.as_str()).copied().unwrap_or(0))
+        });
+    }
+
+    /// Records listening to `asin` just now.
+    pub fn mark_listened(&mut self, asin: &audible::Asin) {
+        self.listened
+            .insert(asin.to_string(), chrono::Utc::now().timestamp());
+    }
 }
 
 fn account_directory(key: &str) -> anyhow::Result<std::path::PathBuf> {
@@ -219,7 +253,9 @@ fn fetch_library(rt: &tokio::runtime::Runtime, client: &Audible) -> anyhow::Resu
                 marketplace,
                 account_key,
                 offline: false,
+                listened: Default::default(),
             };
+            library.listened = audible_listened(rt, client, &library.items);
             let _ = write_json(&cache, &library);
             apply_local_positions(&mut library);
             Ok(library)
@@ -238,6 +274,47 @@ fn fetch_library(rt: &tokio::runtime::Runtime, client: &Audible) -> anyhow::Resu
     }
 }
 
+/// When Audible last received a place for each book in progress, from
+/// whichever device. Empty when Audible can't be reached: the order then
+/// falls back to listening on this Mac.
+fn audible_listened(
+    rt: &tokio::runtime::Runtime,
+    client: &Audible,
+    items: &[LibraryItem],
+) -> std::collections::HashMap<String, i64> {
+    let asins: Vec<_> = items
+        .iter()
+        .filter(|item| {
+            crate::books::book_progress(item).unwrap_or(0.) > 0.
+                && !crate::books::book_finished(item)
+        })
+        .map(|item| item.asin.clone())
+        .collect();
+    if asins.is_empty() {
+        return Default::default();
+    }
+    let Ok(positions) = rt.block_on(client.last_positions(&asins)) else {
+        return Default::default();
+    };
+    positions
+        .into_iter()
+        .filter_map(|title| {
+            let time = parse_audible_time(title.last_position_heard.last_updated.as_deref()?)?;
+            Some((title.asin.to_string(), time))
+        })
+        .collect()
+}
+
+/// Audible's `last_updated`: RFC 3339, or `2024-01-01 12:34:56.789` in UTC.
+fn parse_audible_time(text: &str) -> Option<i64> {
+    if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
+        return Some(time.timestamp());
+    }
+    chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.f")
+        .ok()
+        .map(|time| time.and_utc().timestamp())
+}
+
 /// Shows places saved on this Mac in the library's progress. Audible's
 /// figure lags behind (and misses places it hasn't received yet), so a local
 /// place wins while it is waiting to sync or is further along; a place
@@ -247,6 +324,17 @@ fn apply_local_positions(library: &mut Library) {
         let Some(saved) = local_position(&library.account_key, &item.asin) else {
             continue;
         };
+        // The place's file is rewritten each time listening saves it, so its
+        // time is when the book was last listened to on this Mac.
+        if let Some(saved_at) = position_path(&library.account_key, &item.asin)
+            .ok()
+            .and_then(|path| std::fs::metadata(path).ok()?.modified().ok())
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        {
+            let saved_at = saved_at.as_secs() as i64;
+            let listened = library.listened.entry(item.asin.to_string()).or_default();
+            *listened = (*listened).max(saved_at);
+        }
         let audible = crate::books::book_progress(item).unwrap_or(0.);
         let mut local = item.clone();
         crate::books::apply_position(&mut local, saved.millis, None);
@@ -583,6 +671,53 @@ pub fn search_catalog(query: String) -> anyhow::Result<Vec<audible::models::Prod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn book(asin: &str, percent: f64) -> LibraryItem {
+        serde_json::from_value(serde_json::json!({
+            "asin": asin,
+            "percent_complete": percent,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn books_in_progress_follow_the_last_listen() {
+        let mut library = Library {
+            // Newest purchase first, as Audible returns them.
+            items: vec![
+                book("B000000001", 40.),
+                book("B000000002", 10.),
+                book("B000000003", 0.),
+                book("B000000004", 20.),
+                book("B000000005", 30.),
+            ],
+            marketplace: String::new(),
+            account_key: String::new(),
+            offline: false,
+            listened: [("B000000004".into(), 100), ("B000000002".into(), 50)].into(),
+        };
+        let order = |library: &Library| {
+            library
+                .in_progress()
+                .iter()
+                .map(|item| item.asin.to_string())
+                .collect::<Vec<_>>()
+        };
+        // Listened-to books first, the rest keep their order, unstarted left out.
+        assert_eq!(
+            order(&library),
+            ["B000000004", "B000000002", "B000000001", "B000000005"]
+        );
+        library.mark_listened(&audible::Asin::new("B000000005").unwrap());
+        assert_eq!(order(&library)[0], "B000000005");
+    }
+
+    #[test]
+    fn audible_times_parse_in_both_forms() {
+        assert_eq!(parse_audible_time("2026-11-01T20:14:51.357Z"), Some(1_793_564_091));
+        assert_eq!(parse_audible_time("2026-11-01 20:14:51.357"), Some(1_793_564_091));
+        assert_eq!(parse_audible_time("soon"), None);
+    }
 
     #[test]
     fn playable_path_excludes_encrypted_and_partial_downloads() {

@@ -444,11 +444,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let color = cx.theme().colors.ink_secondary;
-        let listening: Vec<_> = library
-            .items
-            .iter()
-            .filter(|item| book_progress(item).unwrap_or(0.) > 0. && !book_finished(item))
-            .collect();
+        let listening = library.in_progress();
         let recent: Vec<_> = library.items.iter().take(8).collect();
         let mut view = div().flex().flex_col().gap(px(40.));
         if let Some(item) = listening.first() {

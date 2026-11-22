@@ -58,10 +58,11 @@ impl Shell {
             (active.player.duration() > 0.).then(|| (active.player.duration() * 1000.) as u64);
         let version = backend::register_save(&asin);
         // Progress everywhere follows this place straight away.
-        if let Account::Ready(library) = &mut self.account
-            && let Some(item) = library.items.iter_mut().find(|item| item.asin == asin)
-        {
-            crate::books::apply_position(item, millis, length);
+        if let Account::Ready(library) = &mut self.account {
+            if let Some(item) = library.items.iter_mut().find(|item| item.asin == asin) {
+                crate::books::apply_position(item, millis, length);
+            }
+            library.mark_listened(&asin);
         }
         cx.spawn(async move |this, cx| {
             let result = cx

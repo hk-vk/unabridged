@@ -206,7 +206,7 @@ impl Shell {
                 .child(copy("Search the books in your library.".into()))
                 .into_any_element();
         }
-        let items: Vec<_> = library
+        let mut items: Vec<_> = library
             .items
             .iter()
             .filter(|item| match self.page {
@@ -240,6 +240,9 @@ impl Shell {
                 _ => true,
             })
             .collect();
+        if self.page == Page::Progress {
+            library.sort_by_listened(&mut items);
+        }
         if items.is_empty() {
             return base()
                 .child(heading(match self.page {
