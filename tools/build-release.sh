@@ -37,6 +37,18 @@ tools/fetch-sparkle.sh
 # macOS 26 and says so itself on older systems.
 cargo build --release -p better-audible --target-dir "$root/target"
 
+# whisper.cpp must be built for macOS 14 (.cargo/config.toml), or Metal's
+# macOS 15 residency-set class is linked strongly and the app won't launch on
+# macOS 14. whisper-rs-sys doesn't rebuild when that setting changes, so a
+# stale build could slip through; refuse it.
+binary="$root/target/release/better-audible"
+if nm -m "$binary" | grep -q 'external _OBJC_CLASS_$_MTLResidencySetDescriptor' &&
+    ! nm -m "$binary" | grep -q 'weak external _OBJC_CLASS_$_MTLResidencySetDescriptor'; then
+    echo "error: MTLResidencySetDescriptor is strongly linked; the app would not launch on macOS 14." >&2
+    echo "Run: cargo clean -p whisper-rs-sys --release, then build again." >&2
+    exit 1
+fi
+
 app="$root/target/release-app/Unabridged.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"

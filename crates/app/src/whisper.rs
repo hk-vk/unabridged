@@ -133,6 +133,11 @@ static FOREGROUND_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 /// Set when the app quits: every transcription stops, even mid-window.
 static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Whisper's abort callback: stop when the app is quitting.
+unsafe extern "C" fn quitting(_: *mut std::ffi::c_void) -> bool {
+    QUITTING.load(Ordering::Relaxed)
+}
+
 struct Request<'a> {
     foreground: &'a AtomicUsize,
     prefetch: bool,
@@ -472,9 +477,11 @@ fn transcribe_with_request(
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_no_context(true);
-        // Quitting shouldn't wait for the rest of a 30-second window.
-        let quitting: fn() -> bool = || QUITTING.load(Ordering::Relaxed);
-        params.set_abort_callback_safe::<Option<fn() -> bool>, fn() -> bool>(Some(quitting));
+        // Quitting shouldn't wait for the rest of a 30-second window. The
+        // raw callback, not whisper-rs's `set_abort_callback_safe`: that one
+        // reads its boxed closure back as the wrong type and crashes.
+        // SAFETY: `quitting` ignores its user data and only reads an atomic.
+        unsafe { params.set_abort_callback(Some(quitting)) };
         state.full(params, &resample(audio, rate))?;
         for segment in state.as_iter() {
             let line = absolute_line(

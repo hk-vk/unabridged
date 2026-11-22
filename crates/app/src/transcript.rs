@@ -305,9 +305,19 @@ pub fn unavailable(message: String) -> SharedJob {
 /// language, so a chapter transcribed with the wrong language's model is
 /// never shown once the right one is in use.
 fn cache_path(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<PathBuf> {
+    engine_cache_path(engine(locale), key, asin, locale, start_ms)
+}
+
+fn engine_cache_path(
+    engine: Engine,
+    key: &str,
+    asin: &str,
+    locale: &str,
+    start_ms: u64,
+) -> Option<PathBuf> {
     Some(
         transcripts_directory(key)?
-            .join(match engine(locale) {
+            .join(match engine {
                 Engine::Apple => "apple".into(),
                 Engine::Whisper => format!(
                     "whisper-{}-{}",
@@ -343,21 +353,24 @@ fn cached(key: &str, asin: &str, locale: &str, start_ms: u64) -> Option<Vec<Line
     let read = |path: PathBuf| -> Option<Vec<Line>> {
         serde_json::from_slice(&std::fs::read(path).ok()?).ok()
     };
-    read(cache_path(key, asin, locale, start_ms)?).or_else(|| {
-        if engine(locale) == Engine::Apple {
-            let path = transcripts_directory(key)?
+    // Every place a transcript of this span can be, without asking which
+    // engine applies: that asks the Apple helper, and this runs on the main
+    // thread. A chapter has only ever been transcribed by one engine here.
+    [Engine::Apple, Engine::Whisper]
+        .into_iter()
+        .filter_map(|engine| engine_cache_path(engine, key, asin, locale, start_ms))
+        .chain(transcripts_directory(key).map(|directory| {
+            directory
                 .join(asin)
                 .join(locale)
-                .join(format!("{start_ms}.json"));
-            if let Some(lines) = read(path) {
-                return Some(lines);
-            }
-        }
-        (locale == "en-US" && engine(locale) == Engine::Apple)
-            .then(|| legacy_cache_path(key, asin, start_ms))
-            .flatten()
-            .and_then(read)
-    })
+                .join(format!("{start_ms}.json"))
+        }))
+        .chain(
+            (locale == "en-US")
+                .then(|| legacy_cache_path(key, asin, start_ms))
+                .flatten(),
+        )
+        .find_map(read)
 }
 
 fn store(key: &str, asin: &str, locale: &str, start_ms: u64, lines: &[Line]) {

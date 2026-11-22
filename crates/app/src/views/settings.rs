@@ -192,22 +192,30 @@ impl Shell {
             ))
             .children(self.account_settings(cx))
             .children(self.storage_settings(cx))
-            .child(self.speech_settings(cx))
+            .children(self.speech_settings(cx))
             .child(self.about_settings(cx))
             .into_any_element()
     }
 
-    fn speech_settings(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    /// The downloaded Whisper model, to remove it. Choosing and downloading
+    /// one happens in read along's prompt, where it's needed (with progress);
+    /// with nothing downloaded there is nothing to show here.
+    fn speech_settings(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         let ready = matches!(crate::whisper::status(), Ok(crate::whisper::Status::Ready));
+        if !ready && !self.speech_model_busy {
+            return None;
+        }
         let caption = if self.speech_model_busy {
-            "Updating speech model…".to_string()
-        } else if ready {
-            format!("Downloaded, {} MB", crate::whisper::selected().megabytes())
+            "Removing…".to_string()
         } else {
-            "Not downloaded".to_string()
+            format!(
+                "{}, {} MB",
+                crate::whisper::selected().label(),
+                crate::whisper::selected().megabytes()
+            )
         };
         let action = Button::new("settings-speech-model")
-            .label(if ready { "Remove" } else { "Download" })
+            .label("Remove")
             .on_click(cx.listener(move |this, _, _, cx| {
                 if this.speech_model_busy {
                     return;
@@ -216,13 +224,7 @@ impl Shell {
                 cx.notify();
                 cx.spawn(async move |this, cx| {
                     let result = cx
-                        .background_spawn(async move {
-                            if ready {
-                                crate::whisper::remove()
-                            } else {
-                                crate::whisper::download(|_| {})
-                            }
-                        })
+                        .background_spawn(async move { crate::whisper::remove() })
                         .await;
                     let _ = this.update(cx, |this, cx| {
                         this.speech_model_busy = false;
@@ -236,12 +238,12 @@ impl Shell {
                 })
                 .detach();
             }));
-        settings_section(
+        Some(settings_section(
             Icon::Download,
             "Read along",
-            setting_row("Open speech model".into(), caption, action, cx.theme()),
+            setting_row("Whisper speech model".into(), caption, action, cx.theme()),
             cx,
-        )
+        ))
     }
 
     fn account_settings(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
