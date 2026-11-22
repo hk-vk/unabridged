@@ -95,14 +95,24 @@ pub fn selected() -> Model {
         .unwrap_or_default()
 }
 
-/// Uses `model` from now on. Blocking: deletes the other models' files
-/// (and the base model earlier versions downloaded) so only one is on disk.
+/// Uses `model` from now on, and deletes the other models' files (and the
+/// base model earlier versions downloaded) so only one is on disk. The
+/// deleting happens on its own thread: it waits for any model download, and
+/// this is called from the main thread.
 pub fn select(model: Model) {
     let index = Model::ALL.iter().position(|m| *m == model).unwrap_or(0);
     SELECTED.store(index as u8, Ordering::Relaxed);
+    std::thread::spawn(move || remove_other_models(model));
+}
+
+fn remove_other_models(model: Model) {
     let Ok(_guard) = MODEL_IO.lock() else {
         return;
     };
+    // A newer choice has its own thread; leave the deleting to it.
+    if selected() != model {
+        return;
+    }
     let Ok(directory) = models_directory() else {
         return;
     };
@@ -120,6 +130,8 @@ pub fn select(model: Model) {
 static CONTEXT: Mutex<Option<(Model, WhisperContext)>> = Mutex::new(None);
 static MODEL_IO: Mutex<()> = Mutex::new(());
 static FOREGROUND_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+/// Set when the app quits: every transcription stops, even mid-window.
+static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 struct Request<'a> {
     foreground: &'a AtomicUsize,
@@ -142,7 +154,10 @@ impl<'a> Request<'a> {
     }
 
     fn check(&self) -> Result<()> {
-        ensure!(!(self.stop)(), "Transcription stopped");
+        ensure!(
+            !(self.stop)() && !QUITTING.load(Ordering::Relaxed),
+            "Transcription stopped"
+        );
         ensure!(
             !self.prefetch || self.foreground.load(Ordering::SeqCst) == 0,
             "Speech prefetch interrupted by foreground transcription"
@@ -222,11 +237,13 @@ pub fn download(mut progress: impl FnMut(f32)) -> Result<()> {
         .enable_all()
         .build()?
         .block_on(async {
-            let mut response = reqwest::Client::new()
-                .get(model.url())
-                .send()
-                .await?
-                .error_for_status()?;
+            // A stalled connection fails instead of waiting forever; a slow
+            // one that keeps sending is fine.
+            let client = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .read_timeout(std::time::Duration::from_secs(60))
+                .build()?;
+            let mut response = client.get(model.url()).send().await?.error_for_status()?;
             let mut file = std::fs::File::create(&part)?;
             let mut hash = Sha256::new();
             let mut received = 0u64;
@@ -455,6 +472,9 @@ fn transcribe_with_request(
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_no_context(true);
+        // Quitting shouldn't wait for the rest of a 30-second window.
+        let quitting: fn() -> bool = || QUITTING.load(Ordering::Relaxed);
+        params.set_abort_callback_safe::<Option<fn() -> bool>, fn() -> bool>(Some(quitting));
         state.full(params, &resample(audio, rate))?;
         for segment in state.as_iter() {
             let line = absolute_line(
@@ -543,10 +563,22 @@ fn decoder_params(
 
 /// Frees the loaded model before the process exits. ggml's Metal backend
 /// asserts at exit while a model is still loaded, which crashed the app on
-/// quit after read along had run. Skipped if a transcription holds it.
+/// quit after read along had run. Stops any transcription first and waits
+/// up to three seconds for it to let go.
 pub fn shutdown() {
-    if let Ok(mut context) = CONTEXT.try_lock() {
-        context.take();
+    QUITTING.store(true, Ordering::Relaxed);
+    // A running transcription stops at its next check (or Whisper's abort
+    // callback) and lets go of the context; give it a moment.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if let Ok(mut context) = CONTEXT.try_lock() {
+            context.take();
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 

@@ -17,6 +17,11 @@ fn main() {
             .file("src/window.m")
             .file("src/updater.m")
             .flag("-fobjc-arc")
+            // The app's floor (LSMinimumSystemVersion): newer APIs then need
+            // an availability check and are weak-linked, instead of being
+            // required at launch.
+            .flag("-mmacosx-version-min=14.0")
+            .flag("-Werror=unguarded-availability-new")
             .compile("better_audible_player");
         println!("cargo:rustc-link-lib=framework=AVFoundation");
         println!("cargo:rustc-link-lib=framework=CoreMedia");

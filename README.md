@@ -43,9 +43,10 @@ the app.
 cover. Chapters, speeds from 0.75× to 2.5×, a sleep timer and bookmarks.
 
 **Read along.** An on-device transcript follows the narration line by line.
-Click a line you missed to jump back to it. Works on Mac and Windows with a
-one-time download of an open speech model (82 MB); macOS 26 uses Apple’s
-built-in speech recognition. Transcription stays on your computer.
+Click a line you missed to jump back to it. macOS 26 uses Apple’s built-in
+speech recognition. macOS 14 and 15, and languages it doesn’t handle, use an
+open Whisper model you download once: most accurate (575 MB) or smaller
+(265 MB). Transcription stays on your Mac.
 
 **A mini player that floats.** Keep listening in a small window above your other
 apps.
@@ -99,19 +100,7 @@ cargo run -p better-audible    # needs rustup and Xcode 26 or later
 
 Releases: [docs/releasing.md](docs/releasing.md).
 
-### Windows
-
-Windows 10 or 11, x64, can be built from source. Install [rustup](https://rustup.rs)
-and Visual Studio Build Tools with the C++ workload, then run:
-
-```sh
-cargo run -p better-audible
-```
-
-Sign in with Amazon in your browser. When the page says it can’t be found,
-press **Ctrl+L**, then **Ctrl+C** to copy its address. Unabridged picks it up
-and continues signing in. Read along and automatic updates are macOS-only
-for now.
+Windows support is coming.
 
 ## Acknowledgments
 

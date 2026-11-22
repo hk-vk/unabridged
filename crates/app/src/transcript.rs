@@ -53,12 +53,36 @@ fn abandoned(job: &SharedJob) -> bool {
     Arc::strong_count(job) <= 1
 }
 
+/// The Apple helper is built for macOS 26: older systems won't start it at
+/// all, so they count as having none and read along uses Whisper.
 fn helper() -> Option<PathBuf> {
+    if !macos_at_least(26) {
+        return None;
+    }
     let path = std::env::current_exe()
         .ok()?
         .parent()?
         .join("ba-transcribe");
     path.is_file().then_some(path)
+}
+
+/// Whether this Mac runs macOS `major` or later (read once, from
+/// `kern.osproductversion`). Unknown counts as yes, as before this check.
+fn macos_at_least(major: u32) -> bool {
+    static MAJOR: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    MAJOR
+        .get_or_init(|| {
+            let output = std::process::Command::new("/usr/sbin/sysctl")
+                .args(["-n", "kern.osproductversion"])
+                .output()
+                .ok()?;
+            major_version(&String::from_utf8_lossy(&output.stdout))
+        })
+        .is_none_or(|found| found >= major)
+}
+
+fn major_version(version: &str) -> Option<u32> {
+    version.trim().split('.').next()?.parse().ok()
 }
 
 const UNSUPPORTED: &str = "Read along needs macOS 26 or later.";
@@ -717,6 +741,13 @@ mod tests {
             vec![(0., 180.), (180., 360.), (360., 400.)]
         );
         assert!(fetch_pieces(5., 5.).is_empty());
+    }
+
+    #[test]
+    fn reads_the_major_macos_version() {
+        assert_eq!(major_version("14.7.1\n"), Some(14));
+        assert_eq!(major_version("26.0"), Some(26));
+        assert_eq!(major_version(""), None);
     }
 
     #[test]

@@ -2,5 +2,10 @@
 rustflags = ["-C", "target-feature=+crt-static"]
 
 [env]
+# whisper.cpp is built by CMake (whisper-rs-sys passes CMAKE_* through). Built
+# for the SDK's own macOS it links Metal classes from macOS 15+ strongly, and
+# the app would not launch on macOS 14. Rust code keeps its default target:
+# MACOSX_DEPLOYMENT_TARGET would also apply to proc-macro dylibs.
+CMAKE_OSX_DEPLOYMENT_TARGET = "14.0"
 CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
 CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"

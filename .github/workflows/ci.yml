@@ -42,23 +42,3 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
-
-  windows:
-    name: Lint and test (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: rustup show active-toolchain || rustup toolchain install
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace
-
-      - name: Test the Audible crate
-        run: cargo test --manifest-path crates/audible/Cargo.toml
