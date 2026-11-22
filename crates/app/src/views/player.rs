@@ -28,6 +28,10 @@ impl Shell {
             .book_palette(self.palettes.get(&active.asin).copied());
         let timeline = active.timeline();
         let fraction = timeline.fraction();
+        // The search field above the transcript is open (focused, or holding
+        // a search); then the top bar's search button steps aside.
+        let search_field_open = !self.transcript_search.read(cx).value().trim().is_empty()
+            || gpui_kit::Focusable::focus_handle(&self.transcript_search, cx).is_focused(window);
         // The bar is the chapter: time into it on the left, time left in it
         // on the right, and underneath, when it ends on the clock (at the
         // current speed) and how much of the book is left.
@@ -105,15 +109,7 @@ impl Shell {
                 cx.listener(|this, _: &ReadAlongSmaller, _, cx| this.step_read_along_size(-1, cx)),
             )
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
-                if !this.read_along_open {
-                    this.read_along_open = true;
-                    this.ensure_read_along(cx);
-                }
-                window.focus(
-                    &gpui_kit::Focusable::focus_handle(&this.transcript_search, cx),
-                    cx,
-                );
-                cx.notify();
+                this.open_transcript_search(window, cx);
             }))
             .flex()
             .flex_col()
@@ -180,15 +176,43 @@ impl Shell {
                             .justify_center()
                             .child(
                                 div()
-                                    .max_w(px(if compact { 260. } else { 420. }))
+                                    .max_w(px(if compact { 300. } else { 460. }))
                                     .flex()
+                                    .items_center()
+                                    .gap(px(6.))
                                     .child(self.chapter_picker(
                                         "current-chapter-menu",
                                         gpui_kit::Anchor::TopCenter,
                                         menus::PickerColors::field(&palette),
                                         trigger,
                                         cx,
-                                    )),
+                                    ))
+                                    // Search the transcript and chapter names,
+                                    // beside the chapter it searches; only
+                                    // while read along is showing.
+                                    .when(self.read_along_open && !search_field_open, |row| {
+                                        row.child(
+                                            div()
+                                                .id("open-transcript-search")
+                                                .flex_none()
+                                                .size(px(ui::metrics::size::POPUP))
+                                                .rounded(px(ui::metrics::radius::POPUP))
+                                                .bg(palette.on_field_track)
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .cursor_pointer()
+                                                .hover(|style| style.opacity(0.86))
+                                                .child(
+                                                    ui::icon(Icon::Search)
+                                                        .size(px(ui::metrics::icon::MEDIUM))
+                                                        .text_color(palette.on_field_muted),
+                                                )
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.open_transcript_search(window, cx);
+                                                })),
+                                        )
+                                    }),
                             )
                     }))
                     .child(
@@ -316,55 +340,6 @@ impl Shell {
                                         cx,
                                     )
                                     .is_focused(window);
-                                // Above the transcript: the chapter's name
-                                // and a search button; searching turns the
-                                // row into the search field, same height.
-                                let chapter_header = (search_summary.is_some() && !search_open)
-                                    .then(|| {
-                                        let chapter = self
-                                            .player
-                                            .as_ref()
-                                            .and_then(|active| active.timeline().chapter)
-                                            .map(|(_, name)| name)
-                                            .unwrap_or_default();
-                                        div()
-                                            .flex_none()
-                                            .mb(px(14.))
-                                            .h(px(36.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap(px(12.))
-                                            .child(
-                                                div()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .type_style(ui::text::CAPTION)
-                                                    .text_color(palette.on_field_muted)
-                                                    .child(chapter),
-                                            )
-                                            .child(
-                                                IconButton::new(
-                                                    "open-transcript-search",
-                                                    Icon::Search,
-                                                    15.,
-                                                )
-                                                .hit_area(30.)
-                                                .color(palette.on_field_muted)
-                                                .hover_fill(palette.on_field_track)
-                                                .tooltip("Search (⌘F)")
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    window.focus(
-                                                        &gpui_kit::Focusable::focus_handle(
-                                                            &this.transcript_search,
-                                                            cx,
-                                                        ),
-                                                        cx,
-                                                    );
-                                                    cx.notify();
-                                                })),
-                                            )
-                                    });
                                 let search_bar =
                                     search_summary.filter(|_| search_open).map(|match_count| {
                                         self.transcript_search_bar(
@@ -380,7 +355,6 @@ impl Shell {
                                     .min_h_0()
                                     .flex()
                                     .flex_col()
-                                    .children(chapter_header)
                                     .children(search_bar)
                                     .child(
                                         // The hover fill hangs 8pt outside the text, so
@@ -790,7 +764,20 @@ impl Shell {
             })
     }
 
-    /// Clears the transcript search and closes it back to the dock icon;
+    /// Opens read along if needed and puts the cursor in its search field.
+    pub(crate) fn open_transcript_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.read_along_open {
+            self.read_along_open = true;
+            self.ensure_read_along(cx);
+        }
+        window.focus(
+            &gpui_kit::Focusable::focus_handle(&self.transcript_search, cx),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Clears the transcript search and closes it back to the top bar icon;
     /// read along follows playback again.
     pub(crate) fn close_transcript_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.transcript_search

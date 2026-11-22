@@ -7,7 +7,7 @@ What changed in each release of Unabridged. The release workflow copies a versio
 - **Stream any book.** Play starts a book straight away without downloading it first. Downloading is now optional: a small download icon next to Play saves the book for offline listening. Recently streamed parts are cached, so going back over a stretch doesn't fetch it again.
 - **The player opens at once.** Pressing Play takes you straight to Now Playing, which loads the book there. Skips pressed while it loads count from where you left off.
 - **Read along on streamed books.** Read along fetches the chapter you're in, then transcribes it as before. The first lines appear within seconds, and it stops working on a chapter you've moved away from.
-- **Search the transcript.** The search button above read along (or ⌘F) finds a word in the chapter, or a chapter by name; pick a match to jump there.
+- **Search the transcript.** The search button next to the chapter name (or ⌘F) finds a word in the chapter, or a chapter by name; pick a match to jump there.
 - **Read along keeps up on slow connections.** Chapters are fetched in small pieces, several at once, and the next two chapters are made ready while you listen.
 - **Recovers from a dropped connection.** A stream that stalls reconnects by itself, and Play on a book that failed to load tries again from where it got to.
 
