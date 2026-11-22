@@ -40,7 +40,7 @@ impl Shell {
         .detach();
     }
 
-    pub(crate) fn sync_position(&self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_position(&mut self, cx: &mut Context<Self>) {
         // Until the audio connects, the place is only an estimate; once it
         // has failed, the place it reports can't be trusted either. Playing
         // saved it every 30 seconds and on pause.
@@ -54,7 +54,15 @@ impl Shell {
         let asin = active.asin.clone();
         let key = active.account_key.clone();
         let millis = (active.player.position().max(0.) * 1000.) as u64;
+        let length =
+            (active.player.duration() > 0.).then(|| (active.player.duration() * 1000.) as u64);
         let version = backend::register_save(&asin);
+        // Progress everywhere follows this place straight away.
+        if let Account::Ready(library) = &mut self.account
+            && let Some(item) = library.items.iter_mut().find(|item| item.asin == asin)
+        {
+            crate::books::apply_position(item, millis, length);
+        }
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(

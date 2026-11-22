@@ -132,6 +132,33 @@ pub(crate) fn book_progress(item: &audible::models::LibraryItem) -> Option<f64> 
         .map(|value| value.clamp(0., 100.))
 }
 
+/// Puts a listening place into the item's percent and time left, so every
+/// view shows where the listener is on this Mac rather than Audible's last
+/// figure. `length_ms` is the book's exact length when known (the player's);
+/// otherwise the catalog runtime is used. Time left is at 1×, as Audible
+/// shows it.
+pub(crate) fn apply_position(
+    item: &mut audible::models::LibraryItem,
+    millis: u64,
+    length_ms: Option<u64>,
+) {
+    let Some(length) = length_ms
+        .or(item
+            .product
+            .runtime_length_min
+            .map(|minutes| u64::from(minutes) * 60_000))
+        .filter(|length| *length > 0)
+    else {
+        return;
+    };
+    let position = millis.min(length);
+    let percent = position as f64 / length as f64 * 100.;
+    item.percent_complete = Some(percent);
+    let status = item.listening_status.get_or_insert_with(Default::default);
+    status.percent_complete = Some(percent);
+    status.time_remaining_seconds = Some((length - position) / 1000);
+}
+
 pub(crate) fn current_chapter(
     chapters: &[audible::models::Chapter],
     position_ms: u64,
@@ -272,6 +299,58 @@ mod blurb_tests {
         assert_eq!(
             blurb_paragraphs("Praise here ________ Extraordinary results"),
             ["Praise here", "Extraordinary results"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    fn item(runtime_min: u32, percent: f64, left: u64) -> audible::models::LibraryItem {
+        serde_json::from_value(serde_json::json!({
+            "asin": "B000000001",
+            "runtime_length_min": runtime_min,
+            "percent_complete": percent,
+            "listening_status": {
+                "percent_complete": percent,
+                "time_remaining_seconds": left,
+            },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_local_place_sets_percent_and_time_left() {
+        // Audible still says halfway through a 10-hour book.
+        let mut book = item(600, 51., 5 * 3600);
+        // Listening here reached 9 h 50 min of an exact 10-hour length.
+        apply_position(&mut book, (9 * 60 + 50) * 60_000, Some(600 * 60_000));
+        let percent = book_progress(&book).unwrap();
+        assert!((percent - 98.333).abs() < 0.01, "{percent}");
+        let status = book.listening_status.unwrap();
+        assert_eq!(status.time_remaining_seconds, Some(10 * 60));
+    }
+
+    #[test]
+    fn without_an_exact_length_the_runtime_is_used() {
+        let mut book = item(120, 0., 7200);
+        apply_position(&mut book, 30 * 60_000, None);
+        assert_eq!(book_progress(&book), Some(25.));
+        assert_eq!(
+            book.listening_status.unwrap().time_remaining_seconds,
+            Some(90 * 60)
+        );
+    }
+
+    #[test]
+    fn a_place_past_the_end_reads_as_finished_listening() {
+        let mut book = item(60, 10., 3000);
+        apply_position(&mut book, 2 * 3600 * 1000, Some(3600 * 1000));
+        assert_eq!(book_progress(&book), Some(100.));
+        assert_eq!(
+            book.listening_status.unwrap().time_remaining_seconds,
+            Some(0)
         );
     }
 }

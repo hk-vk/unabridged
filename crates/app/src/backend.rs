@@ -237,13 +237,14 @@ fn fetch_library(rt: &tokio::runtime::Runtime, client: &Audible) -> anyhow::Resu
     let marketplace = client.marketplace().display_name().to_string();
     match rt.block_on(client.library(&Default::default())) {
         Ok(items) => {
-            let library = Library {
+            let mut library = Library {
                 items,
                 marketplace,
                 account_key,
                 offline: false,
             };
             let _ = write_json(&cache, &library);
+            apply_local_positions(&mut library);
             Ok(library)
         }
         Err(error) => {
@@ -252,9 +253,28 @@ fn fetch_library(rt: &tokio::runtime::Runtime, client: &Audible) -> anyhow::Resu
                 && library.account_key == account_key
             {
                 library.offline = true;
+                apply_local_positions(&mut library);
                 return Ok(library);
             }
             Err(error.into())
+        }
+    }
+}
+
+/// Shows places saved on this Mac in the library's progress. Audible's
+/// figure lags behind (and misses places it hasn't received yet), so a local
+/// place wins while it is waiting to sync or is further along; a place
+/// further along on Audible (another device) keeps Audible's figure.
+fn apply_local_positions(library: &mut Library) {
+    for item in &mut library.items {
+        let Some(saved) = local_position(&library.account_key, &item.asin) else {
+            continue;
+        };
+        let audible = crate::books::book_progress(item).unwrap_or(0.);
+        let mut local = item.clone();
+        crate::books::apply_position(&mut local, saved.millis, None);
+        if saved.pending || crate::books::book_progress(&local).unwrap_or(0.) > audible {
+            *item = local;
         }
     }
 }

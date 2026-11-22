@@ -211,8 +211,12 @@ impl Shell {
                             shown_buffering = buffering;
                             cx.notify();
                         }
-                        if let Some(active) = this.player.as_ref().filter(|p| p.player.is_playing())
-                        {
+                        let playing_at = this
+                            .player
+                            .as_ref()
+                            .filter(|p| p.player.is_playing())
+                            .map(|active| active.player.position());
+                        if let Some(position) = playing_at {
                             ticks += 1;
                             if ticks >= 150 {
                                 this.sync_position(cx);
@@ -220,7 +224,7 @@ impl Shell {
                             }
                             // Times show whole seconds: redraw once a second, not
                             // on every tick. Each redraw repaints the whole window.
-                            let second = active.player.position().max(0.) as u64;
+                            let second = position.max(0.) as u64;
                             if shown_second != Some(second) {
                                 shown_second = Some(second);
                                 cx.notify();
