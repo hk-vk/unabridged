@@ -159,6 +159,35 @@ pub(crate) fn apply_position(
     status.time_remaining_seconds = Some((length - position) / 1000);
 }
 
+/// Every chapter in playing order, parts and sections included. Audible
+/// gives a chapter with sections its own stretch before the first section
+/// ("Reliability", then "Hardware Faults"); keeping only the innermost ones
+/// left those stretches in no chapter, and the player lost its chapter there.
+/// Each chapter ends where the next starts, in case a parent's length spans
+/// its sections.
+pub(crate) fn playable_chapters(
+    info: &audible::models::ChapterInfo,
+) -> Vec<audible::models::Chapter> {
+    let mut chapters: Vec<_> = info
+        .flatten()
+        .into_iter()
+        .map(|chapter| audible::models::Chapter {
+            chapters: Vec::new(),
+            ..chapter.clone()
+        })
+        .collect();
+    chapters.sort_by_key(|chapter| chapter.start_offset_ms);
+    for i in 1..chapters.len() {
+        let next = chapters[i].start_offset_ms;
+        let chapter = &mut chapters[i - 1];
+        chapter.length_ms = chapter
+            .length_ms
+            .min(next.saturating_sub(chapter.start_offset_ms));
+    }
+    chapters.retain(|chapter| chapter.length_ms > 0);
+    chapters
+}
+
 pub(crate) fn current_chapter(
     chapters: &[audible::models::Chapter],
     position_ms: u64,
@@ -306,6 +335,47 @@ mod blurb_tests {
 #[cfg(test)]
 mod progress_tests {
     use super::*;
+
+    #[test]
+    fn a_chapter_with_sections_keeps_its_own_stretch() {
+        // Designing Data-Intensive Applications: "Reliability" plays for three
+        // minutes before its first section.
+        let info: audible::models::ChapterInfo = serde_json::from_value(serde_json::json!({
+            "chapters": [
+                {"title": "Preface", "start_offset_ms": 0, "length_ms": 1_000},
+                {"title": "Reliability", "start_offset_ms": 1_000, "length_ms": 500, "chapters": [
+                    {"title": "Hardware Faults", "start_offset_ms": 1_500, "length_ms": 400},
+                    {"title": "Software Errors", "start_offset_ms": 1_900, "length_ms": 300},
+                ]},
+                // A part whose length spans its sections.
+                {"title": "Part II", "start_offset_ms": 2_200, "length_ms": 900, "chapters": [
+                    {"title": "Replication", "start_offset_ms": 2_400, "length_ms": 700},
+                ]},
+            ],
+        }))
+        .unwrap();
+        let chapters = playable_chapters(&info);
+        let spans: Vec<_> = chapters
+            .iter()
+            .map(|c| (c.title.as_str(), c.start_offset_ms, c.length_ms))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                ("Preface", 0, 1_000),
+                ("Reliability", 1_000, 500),
+                ("Hardware Faults", 1_500, 400),
+                ("Software Errors", 1_900, 300),
+                ("Part II", 2_200, 200),
+                ("Replication", 2_400, 700),
+            ]
+        );
+        // Every moment of the book is in a chapter.
+        for ms in (0..3_100).step_by(50) {
+            assert!(current_chapter(&chapters, ms).is_some(), "{ms} ms");
+        }
+        assert_eq!(current_chapter(&chapters, 1_200).unwrap().1.title, "Reliability");
+    }
 
     fn item(runtime_min: u32, percent: f64, left: u64) -> audible::models::LibraryItem {
         serde_json::from_value(serde_json::json!({

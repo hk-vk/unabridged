@@ -23,15 +23,7 @@ impl Shell {
                 {
                     player.chapters_loading = false;
                     if let Ok(info) = result {
-                        player.chapters = info
-                            .flatten()
-                            .into_iter()
-                            .filter(|chapter| chapter.chapters.is_empty())
-                            .cloned()
-                            .collect();
-                        player
-                            .chapters
-                            .sort_by_key(|chapter| chapter.start_offset_ms);
+                        player.chapters = crate::books::playable_chapters(&info);
                     }
                     cx.notify();
                 }
