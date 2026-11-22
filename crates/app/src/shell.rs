@@ -8,6 +8,11 @@ impl Shell {
         let library_search = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search titles, authors or narrators")
         });
+        let transcript_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search this chapter")
+                .clean_on_escape()
+        });
         let subscriptions = vec![
             cx.observe_window_appearance(window, |_, window, cx| {
                 ui::Theme::sync_system_appearance(window.appearance(), cx);
@@ -41,6 +46,24 @@ impl Shell {
                     this.search_catalog(cx);
                 }
             }),
+            cx.subscribe(
+                &transcript_search,
+                |this: &mut Self, input, event: &InputEvent, cx| match event {
+                    InputEvent::Change => {
+                        this.transcript_match_cursor = None;
+                        this.transcript_search_scroll
+                            .set_offset(point(px(0.), px(0.)));
+                        if input.read(cx).value().trim().is_empty() {
+                            this.read_along_follow.followed = None;
+                        }
+                        cx.notify();
+                    }
+                    InputEvent::PressEnter { shift, .. } => {
+                        this.jump_transcript_match(!*shift, cx);
+                    }
+                    _ => {}
+                },
+            ),
         ];
         let marketplaces = SearchableVec::new(
             Marketplace::ALL
@@ -81,6 +104,9 @@ impl Shell {
             connecting_after_sign_in: false,
             search,
             library_search,
+            transcript_search,
+            transcript_search_scroll: Default::default(),
+            transcript_match_cursor: None,
             browse_name: None,
             _subscriptions: subscriptions,
             search_results: Vec::new(),
@@ -164,7 +190,7 @@ impl Shell {
                             || (this.mini_lyrics && this.mini_window.is_some())
                         {
                             this.ensure_read_along(cx);
-                            this.follow_read_along(cx.reduce_motion());
+                            this.follow_read_along(cx);
                             cx.notify();
                         }
                         this.recover_stream(cx);
