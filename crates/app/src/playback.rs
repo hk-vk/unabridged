@@ -38,7 +38,14 @@ impl Shell {
     }
 
     pub(crate) fn sync_position(&self, cx: &mut Context<Self>) {
-        let Some(active) = &self.player else { return };
+        // Until the audio connects, the place is only an estimate.
+        let Some(active) = self
+            .player
+            .as_ref()
+            .filter(|active| active.player.is_ready())
+        else {
+            return;
+        };
         let asin = active.asin.clone();
         let key = active.account_key.clone();
         let millis = (active.player.position().max(0.) * 1000.) as u64;
@@ -78,9 +85,6 @@ impl Shell {
         start_at: Option<u64>,
         cx: &mut Context<Self>,
     ) {
-        if self.loading_player {
-            return;
-        }
         if self.player.as_ref().is_some_and(|p| p.asin == asin) {
             if let Some(active) = &mut self.player {
                 if let Some(position) = start_at {
@@ -96,19 +100,56 @@ impl Shell {
             cx.notify();
             return;
         }
-        // A downloaded book plays from this Mac; any other streams from
-        // Audible.
-        let local = backend::downloaded_path(&key, &asin);
         if let Some(active) = &self.player {
             active.player.pause();
             self.sync_position(cx);
         }
-        self.loading_player = true;
-        self.download_notice = Some(format!("Loading {title}…"));
+        // Go to Now Playing straight away; the audio connects there. A
+        // downloaded book plays from this Mac, any other streams from Audible.
+        let local = backend::downloaded_path(&key, &asin);
+        let streaming = local.is_none();
+        let item = match &self.account {
+            Account::Ready(library) => library.items.iter().find(|item| item.asin == asin),
+            _ => None,
+        };
+        let duration = item
+            .and_then(|item| item.product.runtime_length_min)
+            .map_or(0., |minutes| f64::from(minutes) * 60.);
+        let position = match start_at {
+            Some(millis) => millis as f64 / 1000.,
+            None => item
+                .and_then(book_progress)
+                .map_or(0., |percent| duration * percent / 100.),
+        };
+        let cancelled_timer = matches!(&self.sleep, SleepTimer::EndOfChapter { asin: timer_asin, .. } if timer_asin != &asin);
+        if cancelled_timer {
+            self.sleep = SleepTimer::Off;
+        }
+        self.player = Some(ActivePlayer {
+            asin: asin.clone(),
+            account_key: key.clone(),
+            title: title.clone(),
+            player: PlayerSlot::loading(
+                position,
+                duration,
+                self.prefs.speed.unwrap_or(1.),
+                self.prefs.volume.unwrap_or(1.),
+            ),
+            was_playing: true,
+            chapters: Vec::new(),
+            chapters_loading: true,
+            streaming,
+            stream: None,
+            stall: None,
+        });
+        self.read_along = None;
+        self.download_notice = cancelled_timer
+            .then(|| "Chapter sleep timer turned off when you changed books.".into());
+        self.load_chapters(cx);
+        self.open_player(cx);
         cx.notify();
         let quality = self.prefs.download_quality;
         cx.spawn(async move |this, cx| {
-            let streaming = local.is_none();
             let prepared = cx
                 .background_spawn({
                     let asin = asin.clone();
@@ -127,60 +168,41 @@ impl Shell {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.loading_player = false;
-                let mut stream = None;
-                match prepared.and_then(|(position, source)| {
-                    let player = match source {
-                        Source::File(path) => player::Player::open(&path)?,
-                        Source::Stream(source) => {
-                            let player = player::Player::open_stream(
-                                source.clone(),
-                                source.len(),
-                                source.content_type(),
-                                source.duration(),
-                            )?;
-                            stream = Some(source);
-                            player
-                        }
+                // Only for the book still waiting in the player.
+                let Some(active) = this
+                    .player
+                    .as_mut()
+                    .filter(|active| active.asin == asin && !active.player.is_ready())
+                else {
+                    return;
+                };
+                let result = prepared.and_then(|(position, source)| {
+                    let player = match &source {
+                        Source::File(path) => player::Player::open(path)?,
+                        Source::Stream(source) => player::Player::open_stream(
+                            source.clone(),
+                            source.len(),
+                            source.content_type(),
+                            source.duration(),
+                        )?,
                     };
-                    if let Some(speed) = this.prefs.speed {
-                        player.set_rate(speed);
+                    active
+                        .player
+                        .fill(player, position.map(|millis| millis as f64 / 1000.))?;
+                    if let Source::Stream(source) = source {
+                        active.stream = Some(source);
                     }
-                    if let Some(volume) = this.prefs.volume {
-                        player.set_volume(volume);
-                    }
-                    if let Some(millis) = position {
-                        player.seek(millis as f64 / 1000.);
-                    }
-                    player.play()?;
-                    Ok(player)
-                }) {
-                    Ok(player) => {
-                        let cancelled_timer = matches!(&this.sleep, SleepTimer::EndOfChapter { asin: timer_asin, .. } if timer_asin != &asin);
-                        if cancelled_timer { this.sleep = SleepTimer::Off; }
-                        this.player = Some(ActivePlayer {
-                            asin,
-                            account_key: key,
-                            title,
-                            player,
-                            was_playing: true,
-                            chapters: Vec::new(),
-                            chapters_loading: true,
-                            stream,
-                            stall: None,
-                        });
-                        this.load_chapters(cx);
-                        this.download_notice = cancelled_timer.then(|| "Chapter sleep timer turned off when you changed books.".into());
-                        this.open_player(cx);
-                    }
-                    Err(error) if streaming => {
-                        this.download_notice = Some(format!(
-                            "Couldn’t stream {title}: {error}. Check your connection, or download the book to listen offline."
-                        ))
-                    }
-                    Err(error) => {
-                        this.download_notice = Some(format!("Could not start playback: {error}"))
-                    }
+                    Ok(())
+                });
+                if let Err(error) = result {
+                    let message = if streaming {
+                        format!("Couldn’t stream {title}: {error}. Check your connection, or download the book to listen offline.")
+                    } else {
+                        format!("Could not start playback: {error}")
+                    };
+                    active.player.fail(error.to_string());
+                    active.was_playing = false;
+                    this.download_notice = Some(message);
                 }
                 cx.notify();
             });
@@ -223,7 +245,7 @@ impl Shell {
             player.set_volume(active.player.volume());
             player.seek(active.player.position());
             if player.play().is_ok() {
-                active.player = player;
+                active.player = player.into();
                 cx.notify();
             }
         }
@@ -397,6 +419,172 @@ impl Shell {
     }
 }
 
+/// The book in the player: its audio once it's connected, and until then
+/// the place, speed, volume and play/pause the listener has chosen, which
+/// carry over when it connects. Its methods mirror [`player::Player`].
+pub(crate) struct PlayerSlot {
+    audio: Option<player::Player>,
+    position: std::cell::Cell<f64>,
+    /// The listener moved the playhead while it loaded.
+    moved: std::cell::Cell<bool>,
+    duration: f64,
+    rate: std::cell::Cell<f32>,
+    volume: std::cell::Cell<f32>,
+    wants_play: std::cell::Cell<bool>,
+    error: Option<String>,
+}
+
+impl From<player::Player> for PlayerSlot {
+    fn from(audio: player::Player) -> Self {
+        Self {
+            audio: Some(audio),
+            ..Self::loading(0., 0., 1., 1.)
+        }
+    }
+}
+
+impl PlayerSlot {
+    /// Waiting for the audio, from `position` of a book about `duration`
+    /// seconds long (both estimates until it connects).
+    pub(crate) fn loading(position: f64, duration: f64, rate: f32, volume: f32) -> Self {
+        Self {
+            audio: None,
+            position: std::cell::Cell::new(position),
+            moved: std::cell::Cell::new(false),
+            duration,
+            rate: std::cell::Cell::new(rate),
+            volume: std::cell::Cell::new(volume),
+            wants_play: std::cell::Cell::new(true),
+            error: None,
+        }
+    }
+
+    /// The audio is connected.
+    pub(crate) fn is_ready(&self) -> bool {
+        self.audio.is_some()
+    }
+
+    /// Connects the audio with what was chosen while it loaded: the saved
+    /// place (`saved`, seconds) unless the listener moved, speed and volume,
+    /// and playing unless they paused.
+    fn fill(&mut self, audio: player::Player, saved: Option<f64>) -> anyhow::Result<()> {
+        audio.set_rate(self.rate.get());
+        audio.set_volume(self.volume.get());
+        let position = if self.moved.get() {
+            self.position.get()
+        } else {
+            saved.unwrap_or(self.position.get())
+        };
+        audio.seek(position);
+        if self.wants_play.get() {
+            audio.play()?;
+        }
+        self.audio = Some(audio);
+        Ok(())
+    }
+
+    fn fail(&mut self, error: String) {
+        self.error = Some(error);
+        self.wants_play.set(false);
+    }
+
+    pub(crate) fn play(&self) -> anyhow::Result<()> {
+        match &self.audio {
+            Some(audio) => audio.play(),
+            None => match &self.error {
+                Some(error) => Err(anyhow::anyhow!("{error}")),
+                None => {
+                    self.wants_play.set(true);
+                    Ok(())
+                }
+            },
+        }
+    }
+
+    pub(crate) fn pause(&self) {
+        match &self.audio {
+            Some(audio) => audio.pause(),
+            None => self.wants_play.set(false),
+        }
+    }
+
+    pub(crate) fn position(&self) -> f64 {
+        self.audio
+            .as_ref()
+            .map_or_else(|| self.position.get(), player::Player::position)
+    }
+
+    pub(crate) fn duration(&self) -> f64 {
+        self.audio
+            .as_ref()
+            .map_or(self.duration, player::Player::duration)
+    }
+
+    pub(crate) fn seek(&self, seconds: f64) {
+        match &self.audio {
+            Some(audio) => audio.seek(seconds),
+            None => {
+                let end = if self.duration > 0. {
+                    self.duration
+                } else {
+                    f64::MAX
+                };
+                self.position.set(seconds.clamp(0., end));
+                self.moved.set(true);
+            }
+        }
+    }
+
+    /// Wants to play, including while the audio loads or buffers.
+    pub(crate) fn is_playing(&self) -> bool {
+        match &self.audio {
+            Some(audio) => audio.is_playing(),
+            None => self.wants_play.get() && self.error.is_none(),
+        }
+    }
+
+    /// Waiting for audio: loading, or buffering a stream.
+    pub(crate) fn is_buffering(&self) -> bool {
+        match &self.audio {
+            Some(audio) => audio.is_buffering(),
+            None => self.wants_play.get() && self.error.is_none(),
+        }
+    }
+
+    pub(crate) fn error(&self) -> Option<String> {
+        match &self.audio {
+            Some(audio) => audio.error(),
+            None => self.error.clone(),
+        }
+    }
+
+    pub(crate) fn rate(&self) -> f32 {
+        self.audio
+            .as_ref()
+            .map_or_else(|| self.rate.get(), player::Player::rate)
+    }
+
+    pub(crate) fn set_rate(&self, rate: f32) {
+        match &self.audio {
+            Some(audio) => audio.set_rate(rate),
+            None => self.rate.set(rate),
+        }
+    }
+
+    pub(crate) fn volume(&self) -> f32 {
+        self.audio
+            .as_ref()
+            .map_or_else(|| self.volume.get(), player::Player::volume)
+    }
+
+    pub(crate) fn set_volume(&self, volume: f32) {
+        match &self.audio {
+            Some(audio) => audio.set_volume(volume),
+            None => self.volume.set(volume),
+        }
+    }
+}
+
 /// Where a book's audio comes from.
 enum Source {
     File(std::path::PathBuf),
@@ -406,7 +594,7 @@ enum Source {
 impl ActivePlayer {
     /// Whether the book plays from Audible rather than a download.
     pub(crate) fn is_streaming(&self) -> bool {
-        self.stream.is_some()
+        self.streaming
     }
 
     /// The current chapter's timeline, or the whole book's.

@@ -208,6 +208,26 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Option<gpui_kit::AnyElement> {
         let colors = cx.theme().colors;
+        self.download_icon_in(
+            id,
+            key,
+            asin,
+            title,
+            (colors.ink, colors.ink_secondary, colors.fill),
+            cx,
+        )
+    }
+
+    /// [`Self::download_icon`] in given colours: icon, muted, hover fill.
+    pub(crate) fn download_icon_in(
+        &self,
+        id: &str,
+        key: &str,
+        asin: &audible::Asin,
+        title: &str,
+        (ink, muted, fill): (gpui_kit::Hsla, gpui_kit::Hsla, gpui_kit::Hsla),
+        cx: &mut Context<Self>,
+    ) -> Option<gpui_kit::AnyElement> {
         if let Some(download) = &self.download
             && &download.asin == asin
         {
@@ -225,7 +245,7 @@ impl Shell {
             return Some(
                 div()
                     .type_style(ui::text::CAPTION.tabular())
-                    .text_color(colors.ink_secondary)
+                    .text_color(muted)
                     .child(label)
                     .into_any_element(),
             );
@@ -236,16 +256,16 @@ impl Shell {
         }
         let button = IconButton::new(format!("{id}-download"), Icon::Download, 16.)
             .hit_area(30.)
-            .hover_fill(colors.fill);
+            .hover_fill(fill);
         Some(if self.download.is_some() {
             button
-                .color(colors.ink_secondary)
+                .color(muted)
                 .tooltip("Another download is in progress")
                 .into_any_element()
         } else {
             let (key, asin, title) = (key.to_string(), asin.clone(), title.to_string());
             button
-                .color(colors.ink)
+                .color(ink)
                 .tooltip("Download to this Mac")
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.download(key.clone(), asin.clone(), title.clone(), cx)
@@ -383,10 +403,12 @@ impl Shell {
             )
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .items_end()
                     .gap(px(4.))
+                    .whitespace_nowrap()
                     .child(
                         div()
                             .type_style(ui::text::PIXEL_STAT)
@@ -401,7 +423,8 @@ impl Shell {
             )
             .child(
                 div()
-                    .w(px(120.))
+                    .flex_none()
+                    .min_w(px(158.))
                     .flex()
                     .justify_end()
                     .child(self.resume_action(

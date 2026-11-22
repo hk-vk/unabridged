@@ -35,7 +35,9 @@ impl Shell {
         let chapter_countdown = model::format::countdown(timeline.remaining());
         let ends = ends_at(timeline.remaining(), active.player.rate());
         let book_left = model::format::book_left_long(timeline.book_remaining());
-        let progress_note = if timeline.chapter.is_some() {
+        let progress_note = if active.player.is_buffering() {
+            "Loading…".to_string()
+        } else if timeline.chapter.is_some() {
             format!("Chapter ends at {ends} · {}", lowercase_first(&book_left))
         } else {
             format!("Ends at {ends}")
@@ -530,6 +532,25 @@ impl Shell {
                     .items_center()
                     .justify_end()
                     .gap(px(18.))
+                    .children(
+                        active
+                            .is_streaming()
+                            .then(|| {
+                                self.download_icon_in(
+                                    "full",
+                                    &active.account_key,
+                                    &active.asin,
+                                    &active.title,
+                                    (
+                                        palette.on_field_muted,
+                                        palette.on_field_muted,
+                                        palette.on_field_track,
+                                    ),
+                                    cx,
+                                )
+                            })
+                            .flatten(),
+                    )
                     .child(
                         IconButton::new("add-bookmark", Icon::BookmarkAdd, 18.)
                             .hit_area(28.)

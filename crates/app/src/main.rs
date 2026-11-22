@@ -149,12 +149,15 @@ struct ActivePlayer {
     asin: audible::Asin,
     account_key: String,
     title: String,
-    player: player::Player,
+    player: playback::PlayerSlot,
     was_playing: bool,
     chapters: Vec<audible::models::Chapter>,
     chapters_loading: bool,
     /// Set when the book plays from Audible instead of a download.
     stream: Option<std::sync::Arc<streaming::Stream>>,
+    /// Plays from Audible rather than a download (`stream` is set once it
+    /// connects).
+    streaming: bool,
     /// When the stream stalled on a failed read, and how many times it has
     /// been reopened since.
     stall: Option<(std::time::Instant, u32)>,
@@ -244,7 +247,6 @@ struct Shell {
     download_notice: Option<String>,
     download: Option<ActiveDownload>,
     player: Option<ActivePlayer>,
-    loading_player: bool,
     /// When the library was last fetched from Audible, to throttle refreshes.
     library_fetched: Option<std::time::Instant>,
     refreshing: bool,
@@ -293,10 +295,11 @@ fn smoke_open_mini(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App)
                 asin: audible::Asin::new("SMOKETEST")?,
                 account_key: "0".repeat(64),
                 title: "Test audio".into(),
-                player,
+                player: player.into(),
                 was_playing: false,
                 chapters: Vec::new(),
                 chapters_loading: false,
+                streaming: false,
                 stream: None,
                 stall: None,
             });

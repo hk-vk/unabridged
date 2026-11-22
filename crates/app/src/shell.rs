@@ -92,7 +92,6 @@ impl Shell {
             download_notice: None,
             download: None,
             player: None,
-            loading_player: false,
             library_fetched: None,
             refreshing: false,
             pending_purchase: None,
