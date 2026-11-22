@@ -10,7 +10,7 @@ impl Shell {
         });
         let transcript_search = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search this chapter")
+                .placeholder("Search this chapter and chapter names")
                 .clean_on_escape()
         });
         let subscriptions = vec![

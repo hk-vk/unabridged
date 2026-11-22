@@ -296,33 +296,64 @@ impl Shell {
                                         if query.is_empty() {
                                             None
                                         } else {
-                                            Some(transcript_matches(&job.lines, &query).len())
+                                            Some(
+                                                transcript_matches(&job.lines, &query).len()
+                                                    + chapter_matches(
+                                                        self.player
+                                                            .as_ref()
+                                                            .map_or(&[][..], |a| &a.chapters),
+                                                        &query,
+                                                    )
+                                                    .len(),
+                                            )
                                         }
                                     })
                                 });
-                                // The bar shows while searching; otherwise a
-                                // small search button floats over the
-                                // transcript's top-right corner.
+                                // The bar shows while searching.
                                 let search_open = !query.is_empty()
                                     || gpui_kit::Focusable::focus_handle(
                                         &self.transcript_search,
                                         cx,
                                     )
                                     .is_focused(window);
-                                let search_button = (search_summary.is_some() && !search_open)
+                                // Above the transcript: the chapter's name
+                                // and a search button; searching turns the
+                                // row into the search field, same height.
+                                let chapter_header = (search_summary.is_some() && !search_open)
                                     .then(|| {
-                                        div().absolute().top_0().right_0().child(
-                                            IconButton::new(
-                                                "open-transcript-search",
-                                                Icon::Search,
-                                                15.,
+                                        let chapter = self
+                                            .player
+                                            .as_ref()
+                                            .and_then(|active| active.timeline().chapter)
+                                            .map(|(_, name)| name)
+                                            .unwrap_or_default();
+                                        div()
+                                            .flex_none()
+                                            .mb(px(14.))
+                                            .h(px(36.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap(px(12.))
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .type_style(ui::text::CAPTION)
+                                                    .text_color(palette.on_field_muted)
+                                                    .child(chapter),
                                             )
-                                            .hit_area(30.)
-                                            .color(palette.on_field_muted)
-                                            .hover_fill(palette.on_field_track)
-                                            .tooltip("Search this chapter (⌘F)")
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
+                                            .child(
+                                                IconButton::new(
+                                                    "open-transcript-search",
+                                                    Icon::Search,
+                                                    15.,
+                                                )
+                                                .hit_area(30.)
+                                                .color(palette.on_field_muted)
+                                                .hover_fill(palette.on_field_track)
+                                                .tooltip("Search (⌘F)")
+                                                .on_click(cx.listener(|this, _, window, cx| {
                                                     window.focus(
                                                         &gpui_kit::Focusable::focus_handle(
                                                             &this.transcript_search,
@@ -331,9 +362,8 @@ impl Shell {
                                                         cx,
                                                     );
                                                     cx.notify();
-                                                }),
-                                            ),
-                                        )
+                                                })),
+                                            )
                                     });
                                 let search_bar =
                                     search_summary.filter(|_| search_open).map(|match_count| {
@@ -345,12 +375,12 @@ impl Shell {
                                         )
                                     });
                                 div()
-                                    .relative()
                                     .flex_1()
                                     .min_w_0()
                                     .min_h_0()
                                     .flex()
                                     .flex_col()
+                                    .children(chapter_header)
                                     .children(search_bar)
                                     .child(
                                         // The hover fill hangs 8pt outside the text, so
@@ -366,8 +396,6 @@ impl Shell {
                                             ),
                                         ),
                                     )
-                                    // Drawn last so it sits over the lines.
-                                    .children(search_button)
                             })
                     } else {
                         // Cover and the book's name side by side, centred.
@@ -1074,7 +1102,8 @@ pub(crate) fn read_along_list(
     if !query.is_empty() {
         let chapter_start = active.timeline().start;
         let matches = transcript_matches(&job.lines, &query);
-        if matches.is_empty() {
+        let chapter_hits = chapter_matches(&active.chapters, &query);
+        if matches.is_empty() && chapter_hits.is_empty() {
             return div()
                 .px(px(8.))
                 .pt(px(8.))
@@ -1096,6 +1125,72 @@ pub(crate) fn read_along_list(
             .flex_col()
             .gap(px(8.))
             .pb(px(120.));
+        let group_label = |label: &'static str| {
+            div()
+                .px(px(8.))
+                .pt(px(4.))
+                .type_style(ui::text::CAPTION)
+                .text_color(palette.on_field_muted)
+                .child(label)
+        };
+        // Chapter titles that match, across the whole book: jump to the
+        // start of one.
+        let has_chapters = !chapter_hits.is_empty();
+        if has_chapters {
+            results = results.child(group_label("Chapters"));
+        }
+        for index in chapter_hits {
+            let chapter = &active.chapters[index];
+            let start = chapter.start_offset_ms as f64 / 1000.;
+            let target = (start / duration).clamp(0., 1.) as f32;
+            let starts_at = model::format::clock(std::time::Duration::from_secs_f64(start));
+            results = results.child(
+                div()
+                    .id(("read-along-chapter-match", index))
+                    .cursor_pointer()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(8.))
+                    .hover(|style| style.bg(palette.on_field_track))
+                    .flex()
+                    .items_baseline()
+                    .gap(px(12.))
+                    .on_click({
+                        let entity = entity.clone();
+                        move |_, window, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.seek_fraction(target, cx);
+                                this.mini_follow.followed = None;
+                                this.close_transcript_search(window, cx);
+                            });
+                        }
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(48.))
+                            .type_style(ui::text::CAPTION.tabular())
+                            .text_color(palette.on_field_muted)
+                            .child(starts_at),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .type_style(ui::text::BODY_MEDIUM.scaled(text_scale))
+                            .text_color(palette.on_field)
+                            .child(highlight_matches(
+                                &chapter.title,
+                                &query,
+                                palette.on_field,
+                                palette.on_field,
+                            )),
+                    ),
+            );
+        }
+        if !matches.is_empty() && has_chapters {
+            results = results.child(group_label("In this chapter"));
+        }
         for (match_pos, line_index) in matches.into_iter().enumerate() {
             let line = &job.lines[line_index];
             let target = (line.start / duration).clamp(0., 1.) as f32;
@@ -1363,6 +1458,20 @@ fn transcript_placeholder(
     column.into_any_element()
 }
 
+/// Indices of chapters whose title matches `query` (case-insensitive).
+pub(crate) fn chapter_matches(chapters: &[audible::models::Chapter], query: &str) -> Vec<usize> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    chapters
+        .iter()
+        .enumerate()
+        .filter_map(|(index, chapter)| {
+            (!match_ranges(&chapter.title, query).is_empty()).then_some(index)
+        })
+        .collect()
+}
+
 /// Indices of transcript lines matching `query` (case-insensitive).
 pub(crate) fn transcript_matches(lines: &[transcript::Line], query: &str) -> Vec<usize> {
     if query.trim().is_empty() {
@@ -1456,7 +1565,7 @@ fn highlight_matches(
 
 #[cfg(test)]
 mod tests {
-    use super::{chapter_name, match_ranges, transcript_matches};
+    use super::{chapter_matches, chapter_name, match_ranges, transcript_matches};
     use crate::transcript::Line;
 
     #[test]
@@ -1469,6 +1578,23 @@ mod tests {
         assert_eq!(chapter_name("Chapter 3"), "Chapter 3");
         assert_eq!(chapter_name("1984"), "1984");
         assert_eq!(chapter_name("12 Rules"), "12 Rules");
+    }
+
+    #[test]
+    fn search_finds_chapters_by_name() {
+        let chapter = |title: &str| audible::models::Chapter {
+            title: title.into(),
+            start_offset_ms: 0,
+            length_ms: 0,
+            chapters: Vec::new(),
+        };
+        let chapters = [
+            chapter("Opening Credits"),
+            chapter("Chapter 1: The Storm"),
+            chapter("Storms"),
+        ];
+        assert_eq!(chapter_matches(&chapters, "storm"), vec![1, 2]);
+        assert!(chapter_matches(&chapters, "  ").is_empty());
     }
 
     #[test]
