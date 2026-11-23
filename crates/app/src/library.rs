@@ -4,7 +4,15 @@ use crate::*;
 
 impl Shell {
     pub(crate) fn restore(&mut self, cx: &mut Context<Self>) {
-        self.account = Account::Loading;
+        // The library saved last time shows at once; Audible's copy replaces
+        // it when it arrives.
+        self.account = match backend::cached() {
+            Some(library) => Account::Ready(library),
+            None => Account::Loading,
+        };
+        // The fetch below is under way: a refresh now would repeat it.
+        self.library_fetched = Some(std::time::Instant::now());
+        self.load_covers(cx);
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx.background_spawn(async { backend::restore() }).await;

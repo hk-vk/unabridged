@@ -257,6 +257,7 @@ fn fetch_library(rt: &tokio::runtime::Runtime, client: &Audible) -> anyhow::Resu
             };
             library.listened = audible_listened(rt, client, &library.items);
             let _ = write_json(&cache, &library);
+            remember_account(&library.account_key);
             apply_local_positions(&mut library);
             Ok(library)
         }
@@ -344,6 +345,35 @@ fn apply_local_positions(library: &mut Library) {
     }
 }
 
+/// Where the signed-in account's key is kept, so launch can show its saved
+/// library before the Keychain and Audible answer.
+fn last_account_path() -> anyhow::Result<std::path::PathBuf> {
+    Ok(crate::paths::support()?.join("Accounts").join("last-account"))
+}
+
+fn remember_account(key: &str) {
+    if let Ok(path) = last_account_path() {
+        let _ = std::fs::write(path, key);
+    }
+}
+
+/// The library saved on this Mac for the account signed in last time, read
+/// from disk only: launch shows it at once while [`restore`] runs.
+pub fn cached() -> Option<Library> {
+    if std::env::var_os("BETTER_AUDIBLE_SMOKE_TEST").is_some() {
+        return None;
+    }
+    let key = std::fs::read_to_string(last_account_path().ok()?).ok()?;
+    let key = key.trim();
+    let bytes = std::fs::read(account_directory(key).ok()?.join("library.json")).ok()?;
+    let mut library = serde_json::from_slice::<Library>(&bytes).ok()?;
+    if library.account_key != key {
+        return None;
+    }
+    apply_local_positions(&mut library);
+    Some(library)
+}
+
 /// Fetches the library again for a signed-in session, without asking the
 /// Keychain anew after a denial (unlike [`restore`]).
 pub fn refresh() -> anyhow::Result<Option<Library>> {
@@ -365,6 +395,9 @@ pub fn sign_out() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let _guard = rt.enter();
+    if let Ok(path) = last_account_path() {
+        let _ = std::fs::remove_file(path);
+    }
     let store = store()?;
     let Some(client) = Audible::from_store(store.clone(), PROFILE)? else {
         return Ok(());
