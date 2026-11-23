@@ -1,5 +1,8 @@
 #!/bin/sh
-# Build Better Audible and install it as ~/Applications/Better Audible.app.
+# Build Unabridged and install it as ~/Applications/Unabridged.app.
+#
+# The local build keeps its own bundle identifier and the Better Audible data
+# folders, so its sign-in, Keychain permission and downloads carry over.
 #
 # usage: tools/install-app.sh [--relaunch]
 #
@@ -21,13 +24,15 @@
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-app="$HOME/Applications/Better Audible.app"
+app="$HOME/Applications/Unabridged.app"
+# Where the local build was installed before the rename.
+old_app="$HOME/Applications/Better Audible.app"
 binary="$app/Contents/MacOS/better-audible"
 identity="Better Audible Local Signing"
 
 cargo build --manifest-path "$root/Cargo.toml" -p better-audible
 
-pid=$(pgrep -f "^$binary\$" | head -1 || true)
+pid=$(pgrep -f "^($binary|$old_app/Contents/MacOS/better-audible)\$" | head -1 || true)
 if [ -n "$pid" ] && lsof -p "$pid" 2>/dev/null |
     awk '/\.part([[:space:]]|$)|\.partial\.m4b([[:space:]]|$)/ {found=1} END {exit !found}'; then
     echo "A download is in progress; not installing." >&2
@@ -54,6 +59,9 @@ fi
 codesign --verify "$app"
 # Make Finder and the Dock pick up a changed icon.
 touch "$app"
+if [ -d "$old_app" ] && [ -z "$pid" ]; then
+    rm -rf "$old_app"
+fi
 echo "Installed $app"
 
 if [ "${1:-}" = "--relaunch" ]; then
@@ -62,5 +70,6 @@ if [ "${1:-}" = "--relaunch" ]; then
         i=0
         while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); done
     fi
+    rm -rf "$old_app"
     open "$app"
 fi
