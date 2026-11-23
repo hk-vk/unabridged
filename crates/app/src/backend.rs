@@ -348,7 +348,9 @@ fn apply_local_positions(library: &mut Library) {
 /// Where the signed-in account's key is kept, so launch can show its saved
 /// library before the Keychain and Audible answer.
 fn last_account_path() -> anyhow::Result<std::path::PathBuf> {
-    Ok(crate::paths::support()?.join("Accounts").join("last-account"))
+    Ok(crate::paths::support()?
+        .join("Accounts")
+        .join("last-account"))
 }
 
 fn remember_account(key: &str) {
