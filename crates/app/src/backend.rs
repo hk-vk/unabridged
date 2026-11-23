@@ -714,8 +714,14 @@ mod tests {
 
     #[test]
     fn audible_times_parse_in_both_forms() {
-        assert_eq!(parse_audible_time("2026-11-01T20:14:51.357Z"), Some(1_793_564_091));
-        assert_eq!(parse_audible_time("2026-11-01 20:14:51.357"), Some(1_793_564_091));
+        assert_eq!(
+            parse_audible_time("2026-11-01T20:14:51.357Z"),
+            Some(1_793_564_091)
+        );
+        assert_eq!(
+            parse_audible_time("2026-11-01 20:14:51.357"),
+            Some(1_793_564_091)
+        );
         assert_eq!(parse_audible_time("soon"), None);
     }
 

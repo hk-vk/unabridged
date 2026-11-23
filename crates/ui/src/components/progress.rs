@@ -3,10 +3,11 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     App, Bounds, BoxShadow, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, RenderOnce, Styled, Window, canvas, div, prelude::FluentBuilder as _,
-    px, relative,
+    ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
+    canvas, div, prelude::FluentBuilder as _, px, relative,
 };
 
 use crate::color::{hex, with_alpha};
@@ -66,6 +67,7 @@ pub struct Scrubber {
     knob: f32,
     hit: f32,
     on_seek: Option<SeekHandler>,
+    sections: Vec<(f32, SharedString)>,
 }
 
 impl Scrubber {
@@ -79,7 +81,28 @@ impl Scrubber {
             knob: size::SCRUBBER_KNOB,
             hit: 0.0,
             on_seek: None,
+            sections: Vec::new(),
         }
+    }
+
+    /// Splits the track into named segments, one per `(start, name)` with
+    /// the start as a fraction of the bar (such as a chapter's sections),
+    /// with a small gap between them. Hovering a segment shows its name.
+    pub fn segments(mut self, sections: impl IntoIterator<Item = (f32, SharedString)>) -> Self {
+        let mut sections: Vec<_> = sections
+            .into_iter()
+            .filter(|(at, _)| (0.0..1.0).contains(at))
+            .collect();
+        sections.sort_by(|a, b| a.0.total_cmp(&b.0));
+        sections.dedup_by(|a, b| a.0 == b.0);
+        // One segment is just the plain bar.
+        if sections.len() > 1 {
+            if let Some(first) = sections.first_mut() {
+                first.0 = 0.0;
+            }
+            self.sections = sections;
+        }
+        self
     }
 
     /// Track thickness and knob diameter.
@@ -139,20 +162,72 @@ impl RenderOnce for Scrubber {
                     .absolute()
                     .size_full()
             })
-            .child(
-                div()
-                    .w_full()
-                    .h(px(self.track))
-                    .rounded_full()
-                    .bg(c.track)
-                    .child(
+            .when(self.sections.is_empty(), |el| {
+                el.child(
+                    div()
+                        .w_full()
+                        .h(px(self.track))
+                        .rounded_full()
+                        .bg(c.track)
+                        .child(
+                            div()
+                                .h_full()
+                                .w(relative(self.fraction))
+                                .rounded_full()
+                                .bg(c.fill),
+                        ),
+                )
+            })
+            .children({
+                // Each segment sits at its exact place on the bar, inset by
+                // half a gap on inner edges, so the fill ends under the knob.
+                // Its hover area is the scrubber's full height, not the thin
+                // track, and names the segment.
+                let ends: Vec<f32> = self
+                    .sections
+                    .iter()
+                    .skip(1)
+                    .map(|(at, _)| *at)
+                    .chain([1.0])
+                    .collect();
+                let last = self.sections.len().saturating_sub(1);
+                let half = size::SEGMENT_GAP / 2.0;
+                let (fraction, track) = (self.fraction, self.track);
+                self.sections.into_iter().zip(ends).enumerate().map(
+                    move |(index, ((from, name), to))| {
+                        let filled = ((fraction - from) / (to - from)).clamp(0.0, 1.0);
+                        let group = SharedString::from(format!("scrubber-segment-{index}"));
                         div()
-                            .h_full()
-                            .w(relative(self.fraction))
-                            .rounded_full()
-                            .bg(c.fill),
-                    ),
-            )
+                            .id(("scrubber-segment", index))
+                            .group(group.clone())
+                            .absolute()
+                            .top_0()
+                            .h(px(height))
+                            .left(relative(from))
+                            .w(relative(to - from))
+                            .flex()
+                            .items_center()
+                            .when(index > 0, |el| el.pl(px(half)))
+                            .when(index < last, |el| el.pr(px(half)))
+                            .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(track))
+                                    .rounded_full()
+                                    .bg(c.track)
+                                    .group_hover(group, |style| style.bg(c.fill.opacity(0.4)))
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .w(relative(filled))
+                                            .rounded_full()
+                                            .bg(c.fill),
+                                    ),
+                            )
+                    },
+                )
+            })
             .child(
                 div()
                     .absolute()

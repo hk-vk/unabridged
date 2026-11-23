@@ -116,9 +116,11 @@ struct ActiveDownload {
 enum SleepTimer {
     Off,
     Deadline(std::time::Instant),
+    /// Stops at the end of `chapters` chapters, the one playing included.
     EndOfChapter {
         asin: audible::Asin,
         end_seconds: f64,
+        chapters: usize,
     },
 }
 
@@ -127,11 +129,11 @@ impl SleepTimer {
         match self {
             Self::Off => false,
             Self::Deadline(deadline) => now >= *deadline,
-            Self::EndOfChapter { asin, end_seconds } => {
-                current.is_some_and(|(current_asin, position)| {
-                    current_asin == asin && position >= *end_seconds
-                })
-            }
+            Self::EndOfChapter {
+                asin, end_seconds, ..
+            } => current.is_some_and(|(current_asin, position)| {
+                current_asin == asin && position >= *end_seconds
+            }),
         }
     }
     fn label(&self, now: std::time::Instant) -> String {
@@ -144,7 +146,8 @@ impl SleepTimer {
                     .as_secs()
                     .div_ceil(60)
             ),
-            Self::EndOfChapter { .. } => "Stop after this chapter".into(),
+            Self::EndOfChapter { chapters: 1, .. } => "Stop after this chapter".into(),
+            Self::EndOfChapter { chapters, .. } => format!("Stop after {chapters} chapters"),
         }
     }
 
@@ -160,7 +163,8 @@ impl SleepTimer {
                     .as_secs()
                     .div_ceil(60)
             ),
-            Self::EndOfChapter { .. } => "Chapter end".into(),
+            Self::EndOfChapter { chapters: 1, .. } => "Chapter end".into(),
+            Self::EndOfChapter { chapters, .. } => format!("{chapters} chapters"),
         }
     }
 }
@@ -172,6 +176,8 @@ struct ActivePlayer {
     player: playback::PlayerSlot,
     was_playing: bool,
     chapters: Vec<audible::models::Chapter>,
+    /// Where each of `chapters` sits in the book's tree, at the same index.
+    outline: Vec<books::OutlineEntry>,
     chapters_loading: bool,
     /// Set when the book plays from Audible instead of a download.
     stream: Option<std::sync::Arc<streaming::Stream>>,
@@ -301,6 +307,9 @@ struct Shell {
     mini_lyrics_from: f32,
     mini_lyrics_at: Option<std::time::Instant>,
     chapter_picker_scroll: gpui_kit::ScrollHandle,
+    /// Chapters opened or closed by hand in the chapter list; the one
+    /// playing is open unless it is in here.
+    chapters_toggled: std::collections::HashSet<usize>,
     covers: std::collections::HashMap<audible::Asin, std::path::PathBuf>,
     covers_pending: std::collections::HashSet<audible::Asin>,
     palettes: std::collections::HashMap<audible::Asin, ui::theme::BookPalette>,
@@ -326,6 +335,7 @@ fn smoke_open_mini(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App)
                 player: player.into(),
                 was_playing: false,
                 chapters: Vec::new(),
+                outline: Vec::new(),
                 chapters_loading: false,
                 streaming: false,
                 stream: None,
@@ -531,6 +541,7 @@ mod download_tests {
         let chapter = SleepTimer::EndOfChapter {
             asin: book.clone(),
             end_seconds: 120.,
+            chapters: 1,
         };
         assert!(!chapter.due(now, Some((&book, 119.9))));
         assert!(chapter.due(now, Some((&book, 120.))));
@@ -586,7 +597,7 @@ mod download_tests {
                 chapters: vec![],
             },
         ];
-        let timeline = Timeline::chapter(&chapters, 175., 400.);
+        let timeline = Timeline::chapter(&chapters, &[], 175., 400.);
         assert_eq!(timeline.chapter_name(), Some("Two"));
         assert_eq!(timeline.elapsed().as_secs(), 75);
         assert_eq!(timeline.remaining().as_secs(), 225);
@@ -595,11 +606,11 @@ mod download_tests {
         // Half way through chapter two is 250 s into a 400 s book.
         assert!((timeline.book_fraction(0.5) - 0.625).abs() < 1e-6);
         assert_eq!(
-            Timeline::chapter(&chapters, 10., 400.).chapter_name(),
+            Timeline::chapter(&chapters, &[], 10., 400.).chapter_name(),
             Some("Chapter 1")
         );
         // Without chapters the span is the whole book.
-        let book = Timeline::chapter(&[], 100., 400.);
+        let book = Timeline::chapter(&[], &[], 100., 400.);
         assert!(book.chapter.is_none());
         assert!((book.fraction() - 0.25).abs() < 1e-6);
         assert!((book.book_fraction(0.5) - 0.5).abs() < 1e-6);

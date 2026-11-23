@@ -466,7 +466,7 @@ impl Shell {
                 .map(|seconds| model::format::time_left(std::time::Duration::from_secs(seconds)));
             // When this book is in the player the bar shows its chapters,
             // weighted by length: done, the one playing, still to come.
-            let timeline = active.map(|player| (player.timeline(), player.chapters.len()));
+            let timeline = active.map(|player| (player.timeline(), player));
             let bar = match &timeline {
                 Some((timeline, _))
                     if timeline.chapter.is_some() && timeline.end > timeline.start =>
@@ -481,10 +481,11 @@ impl Shell {
                 _ => SegmentedProgress::new(0., (percent / 100.) as f32, 0.),
             };
             let mut caption = vec![format!("{percent:.0}%")];
-            if let Some((timeline, total)) = &timeline
+            if let Some((timeline, player)) = &timeline
                 && let Some((index, _)) = &timeline.chapter
             {
-                caption.push(format!("chapter {} of {total}", index + 1));
+                let (number, total) = player.chapter_number(*index);
+                caption.push(format!("chapter {number} of {total}"));
             }
             caption.extend(left);
             let caption = caption.join(" · ");

@@ -23,7 +23,7 @@ impl Shell {
                 {
                     player.chapters_loading = false;
                     if let Ok(info) = result {
-                        player.chapters = crate::books::playable_chapters(&info);
+                        (player.chapters, player.outline) = crate::books::playable_chapters(&info);
                     }
                     cx.notify();
                 }
@@ -153,12 +153,14 @@ impl Shell {
             ),
             was_playing: true,
             chapters: Vec::new(),
+            outline: Vec::new(),
             chapters_loading: true,
             streaming,
             stream: None,
             stall: None,
         });
         self.read_along = None;
+        self.chapters_toggled.clear();
         self.download_notice = cancelled_timer
             .then(|| "Chapter sleep timer turned off when you changed books.".into());
         self.load_chapters(cx);
@@ -374,34 +376,59 @@ impl Shell {
             "45 minutes" => SleepTimer::Deadline(now + std::time::Duration::from_secs(45 * 60)),
             "1 hour" => SleepTimer::Deadline(now + std::time::Duration::from_secs(60 * 60)),
             "End of chapter" => {
-                let chapter = self.player.as_ref().and_then(|active| {
-                    current_chapter(
-                        &active.chapters,
-                        (active.player.position().max(0.) * 1000.) as u64,
-                    )
-                    .map(|(_, chapter)| {
-                        (
-                            active.asin.clone(),
-                            chapter.start_offset_ms.saturating_add(chapter.length_ms),
-                        )
-                    })
-                });
-                if let Some((asin, end_ms)) = chapter {
-                    SleepTimer::EndOfChapter {
-                        asin,
-                        end_seconds: end_ms as f64 / 1000.,
-                    }
-                } else {
-                    self.download_notice = Some(
-                        "Chapter timing is unavailable. Choose a timed sleep option instead."
-                            .into(),
-                    );
-                    SleepTimer::Off
-                }
+                let count = self.sleep_chapters();
+                self.chapter_sleep(count)
             }
             _ => SleepTimer::Off,
         };
         cx.notify();
+    }
+
+    /// How many chapters the chapter sleep timer is set for; 1 when it isn't.
+    pub(crate) fn sleep_chapters(&self) -> usize {
+        match &self.sleep {
+            SleepTimer::EndOfChapter { chapters, .. } => *chapters,
+            _ => 1,
+        }
+    }
+
+    /// Chapters from the one playing to the end of the book, and the book
+    /// seconds left until the end of `count` of them. `None` without chapters.
+    pub(crate) fn chapter_sleep_span(&self, count: usize) -> Option<(usize, f64)> {
+        let active = self.player.as_ref()?;
+        let position = active.player.position().max(0.);
+        let (left, end_ms) = chapters_end(
+            &active.chapters,
+            &active.outline,
+            (position * 1000.) as u64,
+            count,
+        )?;
+        Some((left, (end_ms as f64 / 1000. - position).max(0.)))
+    }
+
+    /// Sets the sleep timer to the end of `count` chapters, the one playing
+    /// included.
+    pub(crate) fn set_sleep_chapters(&mut self, count: usize, cx: &mut Context<Self>) {
+        self.sleep_choice = "End of chapter";
+        self.sleep = self.chapter_sleep(count);
+        cx.notify();
+    }
+
+    fn chapter_sleep(&mut self, count: usize) -> SleepTimer {
+        let timer = self.player.as_ref().and_then(|active| {
+            let position = (active.player.position().max(0.) * 1000.) as u64;
+            let (left, end_ms) = chapters_end(&active.chapters, &active.outline, position, count)?;
+            Some(SleepTimer::EndOfChapter {
+                asin: active.asin.clone(),
+                end_seconds: end_ms as f64 / 1000.,
+                chapters: count.clamp(1, left),
+            })
+        });
+        timer.unwrap_or_else(|| {
+            self.download_notice =
+                Some("Chapter timing is unavailable. Choose a timed sleep option instead.".into());
+            SleepTimer::Off
+        })
     }
 
     pub(crate) fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
@@ -645,7 +672,84 @@ enum Source {
     Stream(std::sync::Arc<streaming::Stream>),
 }
 
+/// For a sleep timer at `position_ms`: how many chapters are left, the one
+/// playing included, and where the `count`th of them ends (clamped to the
+/// last chapter). Chapters are counted by the outline, so a chapter's
+/// sections are part of it; without one, each entry counts.
+pub(crate) fn chapters_end(
+    chapters: &[audible::models::Chapter],
+    outline: &[OutlineEntry],
+    position_ms: u64,
+    count: usize,
+) -> Option<(usize, u64)> {
+    let end = |chapter: &audible::models::Chapter| {
+        chapter.start_offset_ms.saturating_add(chapter.length_ms)
+    };
+    let (index, _) = current_chapter(chapters, position_ms)?;
+    if outline.len() != chapters.len() {
+        let left = chapters.len() - index;
+        return Some((left, end(&chapters[index + count.clamp(1, left) - 1])));
+    }
+    let total = chapter_count(outline).max(1);
+    let current = outline[index].chapter.min(total - 1);
+    let left = total - current;
+    let target = current + count.clamp(1, left) - 1;
+    let last = outline
+        .iter()
+        .rposition(|entry| entry.chapter == target && entry.level != Level::Part)?;
+    Some((left, end(&chapters[last])))
+}
+
 impl ActivePlayer {
+    /// The chapter on `timeline` split into its sections, each with where it
+    /// starts as a fraction of the chapter bar and its name: the chapter's
+    /// own opening, then one per top-level section, so the bar shows the
+    /// chapter's shape without every sub-section.
+    pub(crate) fn section_segments(
+        &self,
+        timeline: &Timeline,
+    ) -> Vec<(f32, gpui_kit::SharedString)> {
+        let span = timeline.end - timeline.start;
+        let Some((index, _)) = &timeline.chapter else {
+            return Vec::new();
+        };
+        let Some(entry) = self.outline.get(*index) else {
+            return Vec::new();
+        };
+        if self.outline.len() != self.chapters.len() || entry.level == Level::Part || span <= 0. {
+            return Vec::new();
+        }
+        self.chapters
+            .iter()
+            .zip(&self.outline)
+            .filter(|(_, other)| {
+                other.chapter == entry.chapter
+                    && matches!(other.level, Level::Chapter | Level::Section(1))
+            })
+            .map(|(chapter, other)| {
+                let at = ((chapter.start_offset_ms as f64 / 1000. - timeline.start) / span) as f32;
+                let name = match chapter.title.as_str() {
+                    "" if other.level == Level::Chapter => format!("Chapter {}", other.chapter + 1),
+                    "" => "Section".to_string(),
+                    title => title.to_string(),
+                };
+                (at, gpui_kit::SharedString::from(name))
+            })
+            .collect()
+    }
+
+    /// The chapter number (from 1) of `chapters[index]`, and how many
+    /// chapters the book has: "3 of 16" counts chapters, not sections.
+    pub(crate) fn chapter_number(&self, index: usize) -> (usize, usize) {
+        match self.outline.get(index) {
+            Some(entry) if self.outline.len() == self.chapters.len() => (
+                entry.chapter + 1,
+                chapter_count(&self.outline).max(entry.chapter + 1),
+            ),
+            _ => (index + 1, self.chapters.len()),
+        }
+    }
+
     /// Whether the book plays from Audible rather than a download.
     pub(crate) fn is_streaming(&self) -> bool {
         self.streaming
@@ -655,6 +759,7 @@ impl ActivePlayer {
     pub(crate) fn timeline(&self) -> Timeline {
         Timeline::chapter(
             &self.chapters,
+            &self.outline,
             self.player.position(),
             self.player.duration(),
         )
@@ -746,16 +851,23 @@ impl Shell {
         };
         // The next two chapters are made ready in the background, so read
         // along has them even if the connection drops later.
-        let next = active
-            .chapters
-            .iter()
-            .filter(|chapter| chapter.start_offset_ms as f64 / 1000. >= end - 0.5)
-            .take(READ_AHEAD_CHAPTERS)
-            .map(|chapter| {
-                let next_start = chapter.start_offset_ms as f64 / 1000.;
-                span(next_start, next_start + chapter.length_ms as f64 / 1000.)
-            })
-            .collect();
+        // Each is the span the timeline will show there: a whole chapter
+        // with its sections, so the work matches what read along asks for.
+        let mut next = Vec::new();
+        let mut from = end;
+        while next.len() < READ_AHEAD_CHAPTERS {
+            let Some(index) = active
+                .chapters
+                .iter()
+                .position(|chapter| chapter.start_offset_ms as f64 / 1000. >= from - 0.5)
+            else {
+                break;
+            };
+            let (start_ms, end_ms) = chapter_bounds(&active.chapters, &active.outline, index);
+            let (next_start, next_end) = (start_ms as f64 / 1000., end_ms as f64 / 1000.);
+            next.push(span(next_start, next_end));
+            from = next_end.max(next_start + 0.5);
+        }
         self.read_along = Some(ReadAlong {
             asin: active.asin.clone(),
             start_ms,
@@ -1029,6 +1141,37 @@ impl Follow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sleep_timer_can_run_for_several_chapters() {
+        let chapter = |start: u64, length: u64| audible::models::Chapter {
+            title: String::new(),
+            start_offset_ms: start,
+            length_ms: length,
+            chapters: Vec::new(),
+        };
+        let chapters = [chapter(0, 100), chapter(100, 200), chapter(300, 300)];
+        // In the first chapter: three left; two end at 300.
+        assert_eq!(chapters_end(&chapters, &[], 50, 1), Some((3, 100)));
+        assert_eq!(chapters_end(&chapters, &[], 50, 2), Some((3, 300)));
+        // More than are left stops at the end of the last.
+        assert_eq!(chapters_end(&chapters, &[], 150, 9), Some((2, 600)));
+        assert_eq!(chapters_end(&chapters, &[], 700, 1), None);
+        // With an outline, a chapter's sections are part of it: the first
+        // two entries are one chapter, so one chapter from 50 ends at 300.
+        let entry = |level, chapter| OutlineEntry {
+            level,
+            chapter,
+            span_ms: 0,
+        };
+        let outline = [
+            entry(Level::Chapter, 0),
+            entry(Level::Section(1), 0),
+            entry(Level::Chapter, 1),
+        ];
+        assert_eq!(chapters_end(&chapters, &outline, 50, 1), Some((2, 300)));
+        assert_eq!(chapters_end(&chapters, &outline, 150, 2), Some((2, 600)));
+    }
 
     #[test]
     fn skips_while_loading_apply_to_the_saved_place() {

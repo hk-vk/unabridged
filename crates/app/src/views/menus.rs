@@ -62,6 +62,33 @@ struct Choice {
     detail: Option<String>,
     selected: bool,
     pick: Pick,
+    /// − and + under the row; `None` for a step that can't go further.
+    stepper: Option<Stepper>,
+    /// How the row reads.
+    style: RowStyle,
+    /// Steps in from the left, for sections under a chapter.
+    indent: u8,
+    /// A disclosure chevron: whether it is open, and what toggling does.
+    /// Toggling keeps the picker open.
+    expand: Option<(bool, Pick)>,
+}
+
+/// How a picker row reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowStyle {
+    /// A radio dot before the label: one of a set of settings.
+    Radio,
+    /// A plain row; the selected one is highlighted.
+    Plain,
+    /// A plain row in muted ink, for deeper sections.
+    Quiet,
+    /// A small heading over the rows after it, still clickable (a part).
+    Heading,
+}
+
+struct Stepper {
+    less: Option<Pick>,
+    more: Option<Pick>,
 }
 
 type Choices = Rc<dyn Fn(&Shell) -> Vec<Choice>>;
@@ -144,38 +171,94 @@ fn picker(
                 list = list.track_scroll(handle);
             }
             for (index, choice) in rows.into_iter().enumerate() {
+                let stepper = choice.stepper;
                 let pick = choice.pick.clone();
                 let weak = shell.clone();
                 let popover = popover.clone();
+                let style = choice.style;
+                let heading = style == RowStyle::Heading;
+                // A chevron, or room for one, so chapter titles line up.
+                let disclosure =
+                    (style != RowStyle::Radio && choice.indent == 0 && !heading).then(|| {
+                        match choice.expand {
+                            Some((open, toggle)) => {
+                                let weak = shell.clone();
+                                IconButton::new(
+                                    ("picker-expand", index),
+                                    if open {
+                                        Icon::ChevronDown
+                                    } else {
+                                        Icon::ChevronRight
+                                    },
+                                    12.,
+                                )
+                                .hit_area(20.)
+                                .color(colors.muted)
+                                .hover_fill(colors.selected)
+                                .tooltip(if open {
+                                    "Hide sections"
+                                } else {
+                                    "Show sections"
+                                })
+                                .on_click(move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let _ = weak.update(cx, |shell, cx| toggle(shell, cx));
+                                })
+                                .into_any_element()
+                            }
+                            None => div().flex_none().size(px(20.)).into_any_element(),
+                        }
+                    });
                 list = list.child(
                     div()
                         .id(("picker-row", index))
                         .flex()
                         .items_center()
-                        .gap(px(10.))
-                        .min_h(px(36.))
-                        .px(px(10.))
+                        .gap(px(if style == RowStyle::Radio { 10. } else { 6. }))
+                        .min_h(px(if heading { 28. } else { 36. }))
+                        // Chapter titles sit after the chevron (4 + 20 + 6);
+                        // each level of section steps in from there.
+                        .pl(px(match choice.indent {
+                            _ if style == RowStyle::Radio || heading => 10.,
+                            0 => 4.,
+                            indent => 30. + f32::from(indent) * 14.,
+                        }))
+                        .pr(px(10.))
                         .py(px(6.))
+                        .when(heading, |row| row.mt(px(8.)))
                         .rounded(px(9.))
                         .cursor_pointer()
+                        // Hover is fainter than the selected row, so the one
+                        // under the pointer never reads as a second selection.
                         .when(choice.selected, |row| row.bg(colors.selected))
-                        .hover(move |style| style.bg(colors.selected))
+                        .when(!choice.selected, |row| {
+                            row.hover(move |style| style.bg(colors.selected.opacity(0.5)))
+                        })
                         .active(|style| style.opacity(0.8))
                         .on_click(move |_, window, cx| {
                             let _ = weak.update(cx, |shell, cx| pick(shell, cx));
                             popover.update(cx, |state, cx| state.dismiss(window, cx));
                         })
-                        .child(radio(choice.selected, colors))
+                        .when(style == RowStyle::Radio, |row| {
+                            row.child(radio(choice.selected, colors))
+                        })
+                        .children(disclosure)
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .type_style(if choice.selected {
-                                    ui::text::BODY_MEDIUM
-                                } else {
-                                    ui::text::BODY
+                                .type_style(match style {
+                                    RowStyle::Heading => ui::text::FOOTNOTE_STRONG,
+                                    _ if choice.selected => ui::text::BODY_STRONG,
+                                    RowStyle::Plain if choice.indent == 0 => ui::text::BODY_MEDIUM,
+                                    _ => ui::text::BODY,
                                 })
-                                .text_color(colors.ink)
+                                .text_color(match style {
+                                    RowStyle::Heading | RowStyle::Quiet if !choice.selected => {
+                                        colors.muted
+                                    }
+                                    _ => colors.ink,
+                                })
                                 .child(choice.label),
                         )
                         .children(choice.detail.map(|detail| {
@@ -186,6 +269,38 @@ fn picker(
                                 .child(detail)
                         })),
                 );
+                // Outside the row, so stepping keeps the picker open.
+                if let Some(stepper) = stepper {
+                    let step = |id: &'static str,
+                                icon: Icon,
+                                tooltip: &'static str,
+                                pick: Option<Pick>| {
+                        let button = IconButton::new((id, index), icon, 14.)
+                            .hit_area(28.)
+                            .tooltip(tooltip);
+                        match pick {
+                            Some(pick) => {
+                                let weak = shell.clone();
+                                button
+                                    .color(colors.ink)
+                                    .hover_fill(colors.selected)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = weak.update(cx, |shell, cx| pick(shell, cx));
+                                    })
+                            }
+                            None => button.color(colors.muted.opacity(0.4)),
+                        }
+                    };
+                    list = list.child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(4.))
+                            .px(px(4.))
+                            .child(step("picker-less", Icon::Minus, "Fewer", stepper.less))
+                            .child(step("picker-more", Icon::Plus, "More", stepper.more)),
+                    );
+                }
             }
             div()
                 .flex()
@@ -235,24 +350,88 @@ impl Shell {
             };
             let current = active.timeline().chapter.map(|(index, _)| index);
             let duration = active.player.duration().max(1.);
-            active
-                .chapters
-                .iter()
-                .enumerate()
-                .map(|(index, chapter)| {
-                    let target =
-                        (chapter.start_offset_ms as f64 / 1000. / duration).clamp(0., 1.) as f32;
-                    Choice {
-                        label: if chapter.title.is_empty() {
-                            format!("Chapter {}", index + 1)
-                        } else {
-                            chapter.title.clone()
-                        },
+            let name = |index: usize, title: &str| {
+                if title.is_empty() {
+                    format!("Chapter {}", index + 1)
+                } else {
+                    title.to_string()
+                }
+            };
+            let seek = |start_ms: u64| -> Pick {
+                let target = (start_ms as f64 / 1000. / duration).clamp(0., 1.) as f32;
+                Rc::new(move |shell, cx| shell.seek_fraction(target, cx))
+            };
+            // Without an outline (it hasn't loaded), one plain row each.
+            if active.outline.len() != active.chapters.len() {
+                return active
+                    .chapters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, chapter)| Choice {
+                        label: name(index, &chapter.title),
                         detail: Some(model::format::clock(std::time::Duration::from_millis(
                             chapter.length_ms,
                         ))),
                         selected: current == Some(index),
-                        pick: Rc::new(move |shell, cx| shell.seek_fraction(target, cx)),
+                        pick: seek(chapter.start_offset_ms),
+                        stepper: None,
+                        style: RowStyle::Plain,
+                        indent: 0,
+                        expand: None,
+                    })
+                    .collect();
+            }
+            // The chapter playing is open; others show one row until opened.
+            let playing = current.map(|index| active.outline[index].chapter);
+            let is_open = |chapter: usize| {
+                (playing == Some(chapter)) != shell.chapters_toggled.contains(&chapter)
+            };
+            let has_sections = |chapter: usize| {
+                active.outline.iter().any(|entry| {
+                    entry.chapter == chapter && matches!(entry.level, Level::Section(_))
+                })
+            };
+            active
+                .chapters
+                .iter()
+                .zip(&active.outline)
+                .enumerate()
+                .filter(|(_, (_, entry))| match entry.level {
+                    Level::Section(_) => is_open(entry.chapter),
+                    _ => true,
+                })
+                .map(|(index, (chapter, entry))| {
+                    let (style, indent) = match entry.level {
+                        Level::Part => (RowStyle::Heading, 0),
+                        Level::Chapter => (RowStyle::Plain, 0),
+                        Level::Section(1) => (RowStyle::Plain, 1),
+                        Level::Section(depth) => (RowStyle::Quiet, depth.min(3)),
+                    };
+                    let number = entry.chapter;
+                    let expand = (entry.level == Level::Chapter && has_sections(number)).then(
+                        || -> (bool, Pick) {
+                            (
+                                is_open(number),
+                                Rc::new(move |shell: &mut Shell, cx: &mut Context<Shell>| {
+                                    if !shell.chapters_toggled.remove(&number) {
+                                        shell.chapters_toggled.insert(number);
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                        },
+                    );
+                    Choice {
+                        label: name(index, &chapter.title),
+                        detail: (entry.level != Level::Part).then(|| {
+                            model::format::clock(std::time::Duration::from_millis(entry.span_ms))
+                        }),
+                        selected: current == Some(index),
+                        pick: seek(chapter.start_offset_ms),
+                        stepper: None,
+                        style,
+                        indent,
+                        expand,
                     }
                 })
                 .collect()
@@ -285,20 +464,12 @@ impl Shell {
             } else {
                 shell.sleep_choice
             };
-            let chapter_left = shell
-                .player
-                .as_ref()
-                .and_then(|active| {
-                    active
-                        .timeline()
-                        .chapter
-                        .as_ref()
-                        .map(|_| active.timeline())
-                })
-                .map(|timeline| timeline.remaining());
+            let count = shell.sleep_chapters();
+            // Chapters left (this one included) and time to the end of `count`.
+            let chapters = shell.chapter_sleep_span(count);
             SLEEP_CHOICES
                 .into_iter()
-                .filter(|choice| *choice != "End of chapter" || chapter_left.is_some())
+                .filter(|choice| *choice != "End of chapter" || chapters.is_some())
                 .map(|choice| {
                     let minutes = match choice {
                         "15 minutes" => Some(15),
@@ -312,16 +483,37 @@ impl Shell {
                             "until {}",
                             wall_clock_in(std::time::Duration::from_secs(minutes * 60))
                         )),
-                        ("End of chapter", _) => {
-                            chapter_left.map(|left| format!("in {}", model::format::clock(left)))
-                        }
+                        ("End of chapter", _) => chapters.map(|(_, left)| {
+                            format!(
+                                "in {}",
+                                model::format::clock(std::time::Duration::from_secs(left as u64))
+                            )
+                        }),
                         _ => None,
                     };
+                    let chapter_row = choice == "End of chapter";
+                    let label = if chapter_row && count > 1 {
+                        format!("End of {count} chapters")
+                    } else {
+                        choice.to_string()
+                    };
+                    let stepper = chapters.filter(|_| chapter_row).map(|(left, _)| Stepper {
+                        less: (count > 1).then(|| -> Pick {
+                            Rc::new(move |shell, cx| shell.set_sleep_chapters(count - 1, cx))
+                        }),
+                        more: (count < left).then(|| -> Pick {
+                            Rc::new(move |shell, cx| shell.set_sleep_chapters(count + 1, cx))
+                        }),
+                    });
                     Choice {
-                        label: choice.to_string(),
+                        label,
                         detail,
                         selected: choice == current,
                         pick: Rc::new(move |shell, cx| shell.set_sleep(choice, cx)),
+                        stepper,
+                        style: RowStyle::Radio,
+                        indent: 0,
+                        expand: None,
                     }
                 })
                 .collect()
@@ -358,6 +550,10 @@ impl Shell {
                     detail: (speed == 1.0).then(|| "Normal".to_string()),
                     selected: rate.is_some_and(|rate| (rate - speed).abs() < 0.01),
                     pick: Rc::new(move |shell, cx| shell.set_speed(speed, cx)),
+                    stepper: None,
+                    style: RowStyle::Radio,
+                    indent: 0,
+                    expand: None,
                 })
                 .collect()
         });

@@ -146,6 +146,7 @@ impl Shell {
             mini_lyrics_from: 0.,
             mini_lyrics_at: None,
             chapter_picker_scroll: Default::default(),
+            chapters_toggled: Default::default(),
             covers: Default::default(),
             covers_pending: Default::default(),
             palettes: Default::default(),

@@ -172,12 +172,12 @@ impl Shell {
                 "Sleep timer".into()
             };
             let weak = cx.entity().downgrade();
-            let scrubber = Scrubber::new("bar-seek", fraction, ScrubberColors::window(cx)).on_seek(
-                move |value, _, cx| {
+            let scrubber = Scrubber::new("bar-seek", fraction, ScrubberColors::window(cx))
+                .segments(active.section_segments(&timeline))
+                .on_seek(move |value, _, cx| {
                     let target = timeline.book_fraction(value);
                     let _ = weak.update(cx, |this, cx| this.seek_fraction(target, cx));
-                },
-            );
+                });
             div()
                 .mx(px(24.))
                 .mb(px(20.))

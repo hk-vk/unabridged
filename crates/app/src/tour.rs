@@ -90,6 +90,7 @@ pub(crate) fn start(handle: gpui_kit::WindowHandle<Root>, cx: &mut gpui_kit::App
                 player: player.into(),
                 was_playing: true,
                 chapters: Vec::new(),
+                outline: Vec::new(),
                 chapters_loading: false,
                 streaming: false,
                 stream: None,

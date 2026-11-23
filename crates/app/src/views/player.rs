@@ -65,6 +65,7 @@ impl Shell {
             ScrubberColors::field(&palette, true),
         )
         .hit_area(24.)
+        .segments(active.section_segments(&timeline))
         .on_seek({
             let timeline = timeline.clone();
             move |value, _, cx| {
@@ -136,7 +137,7 @@ impl Shell {
                     })
                     .gap(px(10.))
                     .children(timeline.chapter.as_ref().map(|(index, name)| {
-                        let total = active.chapters.len();
+                        let (number, total) = active.chapter_number(*index);
                         // The name truncates; "21 of 30" never does.
                         let trigger = div()
                             .id("current-chapter")
@@ -168,7 +169,7 @@ impl Shell {
                                 div()
                                     .flex_none()
                                     .text_color(palette.on_field_muted)
-                                    .child(format!("{} of {total}", index + 1)),
+                                    .child(format!("{number} of {total}")),
                             );
                         div()
                             .absolute()
@@ -585,10 +586,7 @@ impl Shell {
                         sleep_chip,
                         cx,
                     ))
-                    .child(read_chip)
-                    .when(self.read_along_open, |el| {
-                        el.child(self.read_along_size_control(palette, cx))
-                    }),
+                    .child(read_chip),
             )
             .child(
                 div()
@@ -629,6 +627,11 @@ impl Shell {
                     .items_center()
                     .justify_end()
                     .gap(px(18.))
+                    // Text size sits on this side: with a sleep timer's label
+                    // the left side had no room and ran into the transport.
+                    .when(self.read_along_open, |el| {
+                        el.child(self.read_along_size_control(palette, cx))
+                    })
                     .children(
                         active
                             .is_streaming()

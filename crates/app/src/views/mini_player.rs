@@ -195,6 +195,7 @@ impl MiniPlayer {
             ScrubberColors::field(&palette, false),
         )
         .thickness(4., 10.)
+        .segments(active.section_segments(&timeline))
         .on_seek(move |value, _, cx| {
             let target = timeline.book_fraction(value);
             let _ = seek_shell.update(cx, |shell, cx| shell.seek_fraction(target, cx));
