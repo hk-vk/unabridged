@@ -2,6 +2,14 @@
 
 What changed in each release of Unabridged. The release workflow copies a version's section into its GitHub release notes, so add one before tagging.
 
+## 0.3.2
+
+- **Chapters, parts and sections.** The chapter list shows a book's structure: parts as headings, and sections folded under their chapter, opened with a chevron. The chapter playing opens by itself. "Chapter 3 of 16" counts real chapters, not every section.
+- **The progress bar shows a chapter's sections.** The bar covers the whole chapter and splits into its sections; hover one to see its name.
+- **Sleep after several chapters.** The end-of-chapter sleep timer has − and + to stop after 2, 3 or more chapters.
+- **Continue listening is in order.** Books in progress are ordered by when you last listened, not when you bought them.
+- **The player keeps its chapter** in books whose chapters have sections.
+
 ## 0.3.1
 
 - **Voices sound natural at faster speeds.** Above 1× narration could warble or stutter. It now stays clear at every speed, for streamed and downloaded books.
