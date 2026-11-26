@@ -11,6 +11,7 @@ pub trait StreamRead: Send + Sync + 'static {
     /// May block on the network for a while; should give up soon after
     /// `closed` turns true (the player that asked is gone). Err = give up
     /// this request.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn read_at(
         &self,
         offset: u64,
@@ -20,6 +21,7 @@ pub trait StreamRead: Send + Sync + 'static {
 }
 
 /// A seek target that cannot run past the end of a known duration.
+#[cfg(any(target_os = "macos", test))]
 fn clamp_seek(seconds: f64, duration: f64) -> f64 {
     let seconds = if seconds.is_finite() {
         seconds.max(0.)

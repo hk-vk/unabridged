@@ -213,6 +213,7 @@ fn cache_file_name(path: &Path) -> String {
 
 /// The first of `read` and `closing` to finish: `Some` with the read's
 /// result, or `None` if closing won.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 async fn futures_select<T>(
     mut read: std::pin::Pin<&mut impl std::future::Future<Output = T>>,
     mut closing: std::pin::Pin<&mut impl std::future::Future<Output = ()>>,

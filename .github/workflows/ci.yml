@@ -42,3 +42,39 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  windows:
+    name: Lint and test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install Whisper build prerequisites
+        shell: pwsh
+        run: |
+          if (!(Get-Command cmake -ErrorAction SilentlyContinue)) {
+            choco install cmake --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'CMake installation failed' }
+            "$env:ProgramFiles\CMake\bin" >> $env:GITHUB_PATH
+          }
+          $clang = "$env:ProgramFiles\LLVM\bin"
+          if (!(Test-Path "$clang\libclang.dll")) {
+            choco install llvm --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'LLVM installation failed' }
+          }
+          if (!(Test-Path "$clang\libclang.dll")) { throw 'libclang.dll not found' }
+          "LIBCLANG_PATH=$clang" >> $env:GITHUB_ENV
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Test the Audible crate
+        run: cargo test --manifest-path crates/audible/Cargo.toml
